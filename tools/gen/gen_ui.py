@@ -47,6 +47,7 @@ def param_entry(key, label, p):
     if p["display"] in ("list", "readout"):
         e["type"] = "enum"
         e["options"] = p["values"]
+        e["options_as_string"] = True   # names on the wire; some lists read like numbers (ENS "-12", "+01")
     elif p["display"] == "bipolar":
         e.update(type="int", min=-64, max=63)
     else:
@@ -63,7 +64,8 @@ def build(variant):
     nav = []
 
     labels = [machine_label(m) for m in machines]
-    chain.append({"key": "machine", "name": "MACHN", "type": "enum", "options": labels, "default": labels[0]})
+    chain.append({"key": "machine", "name": "MACHN", "type": "enum", "options": labels, "default": labels[0],
+                  "options_as_string": True})
     chain.append({"key": "level", "name": "LEVEL", "type": "int", "min": 0, "max": 127, "default": 100})
     chain.append({"key": "depth", "name": "LTNCY", "type": "int", "min": 1, "max": 4, "default": 2})
     chain.append({"key": "load", "name": "LOAD", "type": "int", "min": 0, "max": 100, "unit": "%",
