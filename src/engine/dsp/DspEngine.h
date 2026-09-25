@@ -34,6 +34,7 @@ public:
     // word of X/Y/P RAM so nothing of an earlier run (delay lines, filter states) survives: a re-run then
     // renders the same samples as a fresh engine (offline previews rely on it).
     void reset(bool clearMemory = false);
+    void resetKeepCode();
 
     // The DigiPRO Digibank for DDRW/DENS (Y:$150000..): written on every reset and immediately when set.
     void setDigibank(std::shared_ptr<const Digibank> bank);

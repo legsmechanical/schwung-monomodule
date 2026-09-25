@@ -157,8 +157,46 @@ static int multiEngine(const fw::Firmware& fw, int n, double seconds, const char
     return 0;
 }
 
+// --switch: one engine steps through every machine twice; reports the worst block right after each switch.
+// The first pass includes JIT compilation of the new machine's code, the second does not.
+static int switchSpikes(const fw::Firmware& fw)
+{
+    MonoVoice v(fw);
+    if (std::getenv("MNM_PREWARM")) {
+        const auto t0 = Clock::now();
+        v.prewarm();
+        std::printf("prewarm %.0f ms\n", std::chrono::duration<double, std::milli>(Clock::now() - t0).count());
+    }
+    v.warmUp(8);
+    std::vector<float> L(kMoveFrames), R(kMoveFrames), in(kMoveFrames, 0.1f);
+    std::printf("%-11s %12s %12s\n", "machine", "first_us", "second_us");
+    std::vector<double> first;
+    for (int pass = 0; pass < 2; ++pass) {
+        int i = 0;
+        for (const auto& def : host::kMachineDefs) {
+            auto& h = v.host();
+            const bool fx = host::isFxMachine(def.machine);
+            h.setMachine(def.machine);
+            h.setRouting(fx ? host::dspInputBits(host::FxInput::InpAB) : 0u);
+            h.noteOn(fx ? 60 : 48);
+            double worst = 0;
+            for (int b = 0; b < 40; ++b) {
+                const auto s = Clock::now();
+                if (fx) v.processFx(in.data(), in.data(), L.data(), R.data(), kMoveFrames);
+                else v.process(L.data(), R.data(), kMoveFrames);
+                worst = std::max(worst, std::chrono::duration<double, std::micro>(Clock::now() - s).count());
+            }
+            if (pass == 0) first.push_back(worst);
+            else std::printf("%-11s %12.0f %12.0f\n", def.name, first[size_t(i)], worst);
+            ++i;
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
+    if (argc > 2 && std::string(argv[2]) == "--switch") return switchSpikes(fw::loadFirmware(argv[1]));
     if (argc > 3 && std::string(argv[2]) == "--engines") {
         const auto fw = fw::loadFirmware(argv[1]);
         return multiEngine(fw, std::atoi(argv[3]), argc > 4 ? std::atof(argv[4]) : 10.0, argc > 5 ? argv[5] : "SID",

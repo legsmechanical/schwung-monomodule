@@ -167,6 +167,16 @@ void DspEngine::reset(bool clearMemory)
     if (s != kInitSentinel) throw std::runtime_error("DSP init: bad sentinel");
 }
 
+// Schwung: back to the state of a fresh engine without losing the JIT's compiled code. reset(true) would
+// zero P, which invalidates every compiled block; here only internal X/Y RAM is zeroed (P untouched), and
+// reset() then reloads the image (unchanged P words do not invalidate) and runs the kernel's own init, which
+// clears the X work RAM and the external buffers.
+void DspEngine::resetKeepCode()
+{
+    for (TWord a = 0; a < kBridge; ++a) { m_mem->set(MemArea_X, a, 0); m_mem->set(MemArea_Y, a, 0); }
+    reset(false);
+}
+
 void DspEngine::setDigibank(std::shared_ptr<const Digibank> bank)
 {
     m_bank = std::move(bank);

@@ -56,6 +56,16 @@ The rest: DSP RAM (~19 MB, shm, mlocked) and the JIT's per-mode tables and code.
 
 Tails grow with the engine count; the child must be allowed to run a block or two ahead.
 
+## Machine switches (CM5, one engine on core 2): worst block after switching to each machine
+
+Without pre-warm the first switch to a machine JIT-compiles its code in the audio path: 1.6-30 ms
+(SWAVE SAW 25 ms, REVERB 23 ms, VO-6 30 ms) — an audible dropout, ~2-3x that on a CM4. The second
+switch costs a normal block. `MonoVoice::prewarm()` renders every machine once (297 ms per engine on
+CM5), then `DspEngine::resetKeepCode()` zeroes internal X/Y RAM and re-runs the kernel init without
+touching P, so compiled code survives and the voice is exactly a fresh one (`MNM_PREWARM=1
+mnm-golden` = baseline). After it every switch is a normal block (0.3-0.5 ms), except the DSP's own
+work: REVERB ~2.5 ms once when engaged, VO-6 ~0.95 ms per block throughout.
+
 ## Bit-exactness gate
 
 `mnm-golden <os.syx>` renders a fixed script on all 22 machines (notes, parameter sweeps on every

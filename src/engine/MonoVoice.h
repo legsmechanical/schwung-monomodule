@@ -29,6 +29,9 @@ public:
     // Back to the state of a freshly constructed voice: the DSP re-initialised (delay lines, envelopes and
     // every other kernel state cleared), a new HostModel, the FIFO empty. Used between offline renders.
     void reset();
+    // Schwung: renders every machine once so the JIT compiles all their code now (the first block of a
+    // machine otherwise stalls for 5-30 ms on a CM5), then returns to the state of a fresh voice.
+    void prewarm();
 
 private:
     host::HostModel m_host;

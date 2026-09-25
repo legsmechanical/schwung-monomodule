@@ -54,6 +54,26 @@ void MonoVoice::reset()
     m_inPos = 0; m_pos = 0; m_avail = 0;
 }
 
+void MonoVoice::prewarm()
+{
+    for (const auto& def : host::kMachineDefs) {
+        const bool fx = host::isFxMachine(def.machine);
+        m_host.setMachine(def.machine);
+        m_host.setRouting(fx ? host::dspInputBits(host::FxInput::InpAB) : 0u);
+        m_host.noteOn(fx ? 60 : 48);
+        for (int k = 0; k < 24; ++k) {
+            if (fx) { for (auto& x : m_in) x = int32_t(k * 7919 + 13) & 0x3FFFF; m_engine->setInputFrames(m_in.data()); }
+            renderBlock();
+        }
+        m_host.noteOff();
+        for (int k = 0; k < 8; ++k) renderBlock();
+    }
+    m_engine->resetKeepCode();
+    m_host = host::HostModel();
+    m_fifo.fill(0); m_in.fill(0);
+    m_inPos = 0; m_pos = 0; m_avail = 0;
+}
+
 void MonoVoice::warmUp(int blocks)
 {
     m_host.settle();   // start from settled words (the hardware glides in over ~0.2 s after a kit load)

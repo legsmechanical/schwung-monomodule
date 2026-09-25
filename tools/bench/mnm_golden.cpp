@@ -1,7 +1,7 @@
 // Bit-exactness check: renders a fixed script on every machine and prints a hash of the output samples.
 // Run it on the unmodified engine and on an optimised one; identical hashes = identical audio.
 //
-//   mnm-golden <os.syx> [raw-out-dir]
+//   mnm-golden <os.syx> [raw-out-dir]      (MNM_PREWARM=1: pre-warm every voice first; must not change a hash)
 //
 // The script per machine: settle, note on, parameter sweeps on every page, an LFO, a retrigger, note off
 // and a tail (synths); noise with a level ramp and parameter sweeps (FX machines). With raw-out-dir, the
@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 #include <random>
 #include <string>
 #include <vector>
@@ -30,12 +31,14 @@ int main(int argc, char** argv)
 {
     if (argc < 2) { std::fprintf(stderr, "usage: mnm-golden <os.syx> [raw-out-dir]\n"); return 2; }
     const auto fw = fw::loadFirmware(argv[1]);
+    const bool prewarm = std::getenv("MNM_PREWARM") != nullptr;   // the output must not change
     const char* rawDir = argc > 2 ? argv[2] : nullptr;
     constexpr int kChunk = 128, kChunks = 44100 * 3 / kChunk;   // ~3 s per machine
 
     uint64_t all = 0xcbf29ce484222325ull;
     for (const auto& def : host::kMachineDefs) {
         MonoVoice v(fw);
+        if (prewarm) v.prewarm();
         auto& h = v.host();
         h.setMachine(def.machine);
         const bool fx = host::isFxMachine(def.machine);
