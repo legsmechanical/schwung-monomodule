@@ -15,8 +15,8 @@
       "extensions": [
         ".syx"
       ],
-      "description": "Requires the Monomachine OS 1.32B file, a free download from Elektron.",
-      "hint": "Download Elektron_SFX6-60_OS1.32B.zip from elektron.se, unzip it and upload the .syx file.",
+      "description": "Needs the Monomachine OS 1.32B file, a free download from Elektron. Not needed here if it is already uploaded to Monomodule One: both modules use one copy.",
+      "hint": "Only upload it here if Monomodule One is not installed. Otherwise upload it on Monomodule One's page. Unzip Elektron_SFX6-60_OS1.32B.zip and upload the .syx file.",
       "hint_url": "https://www.elektron.se/wp-content/uploads/2024/09/Elektron_SFX6-60_OS1.32B.zip",
       "hint_url_label": "Download (Elektron)",
       "files": [
@@ -24,9 +24,10 @@
           "filename": "Elektron_SFX6-60_OS1.32B.syx",
           "label": "Monomachine OS 1.32B",
           "size": 903066,
-          "required": true
+          "required": false
         }
-      ]
+      ],
+      "optional": true
     },
     {
       "path": "dumps",
