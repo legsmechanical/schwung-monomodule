@@ -1,0 +1,3 @@
+[submodule "libs/monomodule"]
+	path = libs/monomodule
+	url = https://github.com/shnolk/monomodule
