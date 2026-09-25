@@ -40,10 +40,74 @@ PREFIX = {"GND": "gnd", "SIN": "sin", "NOIS": "nois", "6581": "sid", "SAW": "saw
           "PHASER": "pha", "FLANGER": "fla"}
 
 
-def param_entry(key, label, p):
+# Full names for the header while a knob is held (the cell keeps the hardware label as short_name).
+# From the Monomachine user manual (OS 1.32, Appendix A and the track pages), which defines each label as
+# "LABEL (name)". Keyed by machine prefix for machine-specific meanings, then by page, then generic.
+LONG = {
+    "": {"TUNE": "Tune", "PW": "Pulse Width", "PWAD": "Pulse Width Add", "PWRS": "Pulse Width Restart",
+         "WAVE": "Waveform", "UNIL": "Unison Level", "UNIW": "Unison Width", "UNIX": "Unison Extended Level",
+         "SUBX": "Square Sub -1 Oct", "SUB1": "Sine Sub -1 Oct", "SUB2": "Sine Sub -2 Oct",
+         "PCH2": "Pitch 2", "PCH3": "Pitch 3", "PCH4": "Pitch 4", "CHRL": "Chorus Level", "CHRW": "Chorus Width",
+         "WP": "Wave Phase", "WPM": "Wave Phase Mod", "WPRS": "Wave Phase Restart", "SYNC": "Hard Sync",
+         "SFRQ": "Sync Source Freq", "PTCH": "Pitch", "STRT": "Sample Start", "RTRG": "Retrig", "RTIM": "Retrig Timing",
+         "WAV1": "Waveform 1", "WAV2": "Waveform 2", "TIME": "Glide Time", "BR1": "Bit Reduction 1",
+         "BR2": "Bit Reduction 2", "TONE": "Tone", "INP": "Input Gain", "MIX": "Dry/Wet Mix", "DEP": "Depth",
+         "SPD": "Speed", "FB": "Feedback", "WID": "Stereo Width", "DEL": "Delay", "LP": "Low-Pass Filter",
+         "HP": "High-Pass Filter"},
+    "nois": {"ST": "Stereo", "RED": "Redness", "STON": "Stereo On"},
+    "sid": {"MOD": "Modulation", "MSRC": "Modulation Source", "MFRQ": "Modulation Freq"},
+    "ddrw": {"MIX": "Waveform Mix", "WID": "Waveform Distance"},
+    "fms": {"1FRQ": "Mod 1 Frequency", "1FIN": "Mod 1 Fine Tune", "1ENV": "Mod 1 Volume & Env", "1FB": "Mod 1 Feedback",
+            "2FRQ": "Mod 2 Frequency", "2VOL": "Mod 2 Vol & Feedback"},
+    "fmp": {"1FRQ": "Mod 1 Frequency", "1ENV": "Mod 1 Volume & Env", "2FRQ": "Mod 2 Frequency",
+            "2ENV": "Mod 2 Volume & Env", "3FRQ": "Mod 3 Frequency", "3ENV": "Mod 3 Volume & Env"},
+    "fmd": {"1FRQ": "Mod 1 Frequency", "1FEN": "Mod 1 Freq Envelope", "1VOL": "Mod 1 Vol & Feedback",
+            "1VEN": "Mod 1 Vol Envelope", "2FRQ": "Mod 2 Frequency", "2ENV": "Mod 2 Volume & Env", "2FB": "Mod 2 Feedback"},
+    "vo6": {"VOC1": "Vowel Formant 1", "VOC2": "Vowel Formant 2", "V-SW": "Vowel Switch", "VOIC": "Voice Type",
+            "CONS": "Consonant", "CLEN": "Consonant Length", "CVOL": "Consonant Volume"},
+    "rev": {"DEC": "Decay", "DAMP": "Damping", "GATE": "Gate Sensitivity"},
+    "dyn": {"ATK": "Attack", "REL": "Release", "THRS": "Threshold", "RAT": "Ratio", "GAIN": "Makeup Gain",
+            "RMS": "RMS Detection"},
+    "ring": {"WAVE": "Waveform (Sine-Tri)", "EXT": "External Signal"},
+    "pha": {"CNTR": "Center"},
+    "amp": {"ATK": "Attack", "HOLD": "Hold", "DEC": "Decay", "REL": "Release", "DIST": "Distortion", "VOL": "Volume",
+            "PAN": "Pan", "PORT": "Portamento"},
+    "filt": {"BASE": "Filter Base", "WDTH": "Filter Width", "HPQ": "High-Pass Q", "LPQ": "Low-Pass Q",
+             "ATK": "Env Attack", "DEC": "Env Decay", "BOFS": "Base Env Offset", "WOFS": "Width Env Offset"},
+    "efx": {"EQF": "EQ Frequency", "EQG": "EQ Gain", "SRR": "Sample Rate Reduction", "DTIM": "Delay Time",
+            "DSND": "Delay Send", "DFB": "Delay Feedback", "DBAS": "Delay Filter Base", "DWID": "Delay Filter Width"},
+    "lfo": {"PAGE": "Target Page", "DEST": "Destination", "TRIG": "Trig Mode", "WAVE": "Waveform",
+            "MULT": "Speed Multiplier", "SPD": "Speed", "INTL": "Interlace", "DPTH": "Depth"},
+}
+
+
+def long_name(scope, label):
+    name = LONG.get(scope, {}).get(label) or LONG[""].get(label)
+    assert name, f"no long name for {scope}/{label}"
+    return name
+
+
+# Widgets, decided per control (docs: schwung-current docs/MODULES.md "Parameter visualisations"):
+#  - a picture only where it is TRUE: the host's waveform silhouettes know TRI/SAW/SQR/RND and draw a sine
+#    for anything else, so SID WAVE (PULS, MIX) and LFO WAVE (ITRI, EXP, RMP, ...) show their names instead
+#  - FILT ATK+DEC sit side by side: an attack/decay envelope. AMP's ATK HOLD DEC REL cannot be one (HOLD has
+#    no role and a group must be contiguous)
+#  - levels are faders; OFF/ON lists are switches (detected); small ranges draw as big numbers (automatic)
+VIZ = {("sid", "WAVE"): False, ("lfo", "WAVE"): False,
+       ("filt", "ATK"): {"group": "fenv", "role": "attack"}, ("filt", "DEC"): {"group": "fenv", "role": "decay"},
+       ("amp", "VOL"): {"kind": "fader"}, ("dyn", "GAIN"): {"kind": "fader"},
+       # envelope and glide TIMES, not levels: the detector's fader guess is wrong for them
+       ("amp", "ATK"): False, ("amp", "HOLD"): False, ("amp", "DEC"): False, ("amp", "REL"): False,
+       ("amp", "PORT"): False}
+
+
+def param_entry(key, label, p, scope=""):
     """A chain_params / hierarchy param for one hardware knob. Values travel as the display value:
     numeric 0..127, bipolar -64..63, lists / readouts as their option names."""
-    e = {"key": key, "name": label}
+    e = {"key": key, "name": long_name(scope, label), "short_name": label}
+    v = VIZ.get((scope, label))
+    if v is None and p.get("values") == ["OFF", "ON"]: v = {"kind": "switch"}   # an on/off: say so
+    if v is not None: e["viz"] = v
     if p["display"] in ("list", "readout"):
         e["type"] = "enum"
         e["options"] = p["values"]
@@ -64,12 +128,14 @@ def build(variant):
     nav = []
 
     labels = [machine_label(m) for m in machines]
-    chain.append({"key": "machine", "name": "MACHN", "type": "enum", "options": labels, "default": labels[0],
-                  "options_as_string": True})
-    chain.append({"key": "level", "name": "LEVEL", "type": "int", "min": 0, "max": 127, "default": 100})
-    chain.append({"key": "depth", "name": "LTNCY", "type": "int", "min": 1, "max": 4, "default": 2})
-    chain.append({"key": "load", "name": "LOAD", "type": "int", "min": 0, "max": 100, "unit": "%",
-                  "access": "read", "live": True})
+    chain.append({"key": "machine", "name": "Machine", "short_name": "MACHN", "type": "enum", "options": labels,
+                  "default": labels[0], "options_as_string": True})
+    chain.append({"key": "level", "name": "Track Level", "short_name": "LEVEL", "type": "int", "min": 0, "max": 127,
+                  "default": 100, "viz": {"kind": "fader"}})
+    chain.append({"key": "depth", "name": "Latency (blocks ahead)", "short_name": "LTNCY", "type": "int", "min": 1,
+                  "max": 4, "default": 2})
+    chain.append({"key": "load", "name": "Engine Load", "short_name": "LOAD", "type": "int", "min": 0, "max": 100,
+                  "unit": "%", "access": "read", "live": True})
 
     # one SYN level per machine, gated on the machine
     for m, label in zip(machines, labels):
@@ -80,7 +146,7 @@ def build(variant):
                 knobs.append("")
                 continue
             key = f'{pre}_{slug(p["label"])}'
-            e = param_entry(key, p["label"], p)
+            e = param_entry(key, p["label"], p, pre)
             chain.append(e); params.append(e); knobs.append(key)
             defs.append((key, 0, i, KIND[p["display"]], p["count"], m["index"], p.get("values"), p["default"]))
         while knobs and knobs[-1] == "": knobs.pop()
@@ -96,7 +162,7 @@ def build(variant):
         for i, lab in enumerate(sp["labels"]):
             bip = (sp["bipolarMask"] >> i) & 1
             key = f"{page}_{slug(lab)}"
-            e = param_entry(key, lab, {"display": "bipolar" if bip else "numeric"})
+            e = param_entry(key, lab, {"display": "bipolar" if bip else "numeric"}, page)
             chain.append(e); params.append(e); knobs.append(key)
             dflt = SPEC["ampDefaultsFx"][i] if (fx and pi == 0) else sp["defaults"][i]
             defs.append((key, pi + 1, i, KIND["bipolar" if bip else "numeric"], 128, -1, None, dflt))
@@ -111,14 +177,14 @@ def build(variant):
             if p["label"] == "DEST":
                 for pg, pname in enumerate(pages):
                     key = f"lfo{n}_dest_{slug(pname)}"
-                    e = param_entry(key, "DEST", {"display": "list", "values": SPEC["lfoDest"][pg]})
+                    e = param_entry(key, "DEST", {"display": "list", "values": SPEC["lfoDest"][pg]}, "lfo")
                     chain.append(dict(e))
                     e["visible_if"] = {"param": f"lfo{n}_page", "equals": pname}
                     params.append(e); knobs.append(key)
                     defs.append((key, 3 + n, i, KIND["list"], 8, -1, SPEC["lfoDest"][pg], p["default"]))
                 continue
             key = f"lfo{n}_{slug(p['label'])}"
-            e = param_entry(key, p["label"], p)
+            e = param_entry(key, p["label"], p, "lfo")
             chain.append(e); params.append(e); knobs.append(key)
             defs.append((key, 3 + n, i, KIND[p["display"]], p["count"], -1, p.get("values"), p["default"]))
         levels[f"lfo{n}"] = {"name": f"LFO{n}", "params": params, "knobs": knobs}
