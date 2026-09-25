@@ -76,7 +76,7 @@ Engine time per 128-frame block inside Move: 400-670 us (VO-6 and REVERB peaks 2
 1.5-2x `mnm-bench`. The CPUs run the `ondemand` governor (1.5-2.4 GHz on this CM5): the bench keeps
 a core busy and boosts it, the real engine works in bursts and mostly runs near 1.5-1.6 GHz. **The
 in-Move numbers are the real ones**; bench numbers are for comparing changes. A CM4's governor
-range decides its real cost — another reason the beta must report load from real devices.
+range decides its real cost — another reason the test build must report load from real devices.
 
 ## Idle parking (not bit-exact on wake; Josh approved 2026-09-25)
 

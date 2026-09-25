@@ -38,7 +38,7 @@ add_executable(mnm-disasm tools/disasm/mnm_disasm.cpp)
 target_link_libraries(mnm-disasm PRIVATE mnmcore)
 
 # ---- the modules (Linux / Move only)
-# MNM_UI_COMPAT=ON: the closed-beta build for Schwung 1.4.0 (a gate-free UI; see mnm_plugin.cpp).
+# MNM_UI_COMPAT=ON: the test build for Schwung 1.4.0 (a gate-free UI; see mnm_plugin.cpp).
 option(MNM_UI_COMPAT "Serve the gate-free UI that host 1.4.0 can drive" OFF)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   # Engine process: one per module instance, spawned by the plugin.

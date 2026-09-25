@@ -11,7 +11,7 @@ Monomachine (SFX-6 / SFX-60) that runs the Monomachine's own sound engine inside
 
 Not affiliated with, endorsed by or sponsored by Elektron. Licensed GPLv3, as upstream.
 
-## Closed beta (Schwung 1.4.0)
+## Test build (Schwung 1.4.0)
 
 ### Install
 
@@ -45,8 +45,8 @@ Cross-compiled for Move (aarch64) in Docker:
 ```bash
 git submodule update --init
 scripts/build.sh                                   # dist/  (the pages for the next Schwung release)
-BUILD_DIR=build-arm-beta CMAKE_EXTRA=-DMNM_UI_COMPAT=ON DIST_DIR=dist-beta VERSION=0.1.0-beta.1 \
-  scripts/build.sh                                 # dist-beta/  (the closed beta, for Schwung 1.4.0)
+BUILD_DIR=build-arm-test CMAKE_EXTRA=-DMNM_UI_COMPAT=ON DIST_DIR=dist-test VERSION=0.1.0-test.1 \
+  scripts/build.sh                                 # dist-test/  (the test build, for Schwung 1.4.0)
 ```
 
 `tools/gen/gen_ui.py` generates the pages from upstream's display spec; `docs/PLAN.md`, `docs/PERF.md` and

@@ -1,7 +1,7 @@
 # Engine & hosting plan (no UI)
 
 Planned 2026-09-24 (Fable). Adapted the same day: no CM4 access, so M0 runs on the CM5 with
-estimated CM4 ranges; real CM4 numbers come from closed-beta testers.
+estimated CM4 ranges; real CM4 numbers come from test-build testers.
 
 ## Facts that drive it (dsp56300 paths relative to `build-mac/_deps/dsp56300-src/source`)
 

@@ -17,13 +17,13 @@ cmake -B "$BUILD_DIR" -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/aarch64-toolchain.cm
 cmake --build "$BUILD_DIR" -j"$(nproc)" ${1:+--target "$@"}
 
 # ---- package: $DIST_DIR/<module>/ with module.json, the plugin and the engine
-#   the closed beta for Schwung 1.4.0:  BUILD_DIR=build-arm-beta CMAKE_EXTRA=-DMNM_UI_COMPAT=ON DIST_DIR=dist-beta scripts/build.sh
+#   the test build for Schwung 1.4.0:  BUILD_DIR=build-arm-test CMAKE_EXTRA=-DMNM_UI_COMPAT=ON DIST_DIR=dist-test scripts/build.sh
 DIST_DIR="${DIST_DIR:-dist}"
 if [ -f "$BUILD_DIR/mnm-engine" ] && [ -f "$BUILD_DIR/dsp.so" ] && [ -f "$BUILD_DIR/monomodule-fx.so" ]; then
     for m in monomodule-one monomodule-fx; do
         rm -rf "$DIST_DIR/$m" && mkdir -p "$DIST_DIR/$m/os"
         cp "modules/$m/module.json" "modules/$m/help.json" "$BUILD_DIR/mnm-engine" "$DIST_DIR/$m/"
-        # a versioned package: VERSION=0.1.0-beta.1 scripts/build.sh
+        # a versioned package: VERSION=0.1.0-test.1 scripts/build.sh
         if [ -n "$VERSION" ]; then sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" "$DIST_DIR/$m/module.json"; fi
         if [ "$m" = monomodule-one ]; then cp "$BUILD_DIR/dsp.so" "$DIST_DIR/$m/"; else cp "$BUILD_DIR/monomodule-fx.so" "$DIST_DIR/$m/"; fi
         "${CROSS_PREFIX}strip" "$DIST_DIR/$m/mnm-engine" "$DIST_DIR/$m/"*.so

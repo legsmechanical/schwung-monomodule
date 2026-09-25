@@ -85,7 +85,7 @@ constexpr const char* kCompatHierarchy = ui::kONECompatHierarchy;
 constexpr const ui::MachineJson* kCompatSyn = ui::kONECompatSyn;
 constexpr const char* const (*kCompatDest)[9] = ui::kONECompatDest;
 #endif
-// MNM_UI_COMPAT (the closed-beta build, for host 1.4.0): serve a hierarchy with NO visible_if gates. Host
+// MNM_UI_COMPAT (the test build, for host 1.4.0): serve a hierarchy with NO visible_if gates. Host
 // 1.4.0 re-reads a gate only when the grid itself writes it, so a preset or a restored state could not
 // switch the machine page there (charlesvestal/schwung#533 came later). Instead the page set is rebuilt
 // from the current machine and LFO pages each time it is served, and every change that alters it arms

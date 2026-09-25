@@ -4,4 +4,4 @@ dist/
 roms/
 os/
 __pycache__/
-dist-beta/
+dist-test/
