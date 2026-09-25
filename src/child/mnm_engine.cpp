@@ -134,6 +134,7 @@ int main(int argc, char** argv)
     g_log = std::fopen(argv[2], "a");
     const int fifo = argc > 3 ? std::atoi(argv[3]) : 10;
     prctl(PR_SET_PDEATHSIG, SIGKILL);   // die with the plugin's supervisor thread
+    if (getppid() == 1) return 1;       // the parent died before the prctl took effect
     prctl(PR_SET_NAME, "mnm-engine");
 
     auto* seg = static_cast<shm::Segment*>(mmap(nullptr, sizeof(shm::Segment), PROT_READ | PROT_WRITE, MAP_SHARED, 3, 0));
@@ -189,6 +190,7 @@ int main(int argc, char** argv)
     std::vector<float> L(shm::kFrames), R(shm::kFrames), inL(shm::kFrames), inR(shm::kFrames);
     const bool fxIn = s.hasInput != 0;
     while (!s.shutdown.load(std::memory_order_acquire)) {
+        if (getppid() == 1) break;   // MoveOriginal is gone
         s.heartbeat.fetch_add(1, std::memory_order_relaxed);
         const uint32_t hb = s.host_block.load(std::memory_order_acquire);
         const uint32_t depth = std::clamp<uint32_t>(s.depth.load(std::memory_order_relaxed), 1, shm::kMaxDepth);
@@ -232,7 +234,11 @@ int main(int argc, char** argv)
             st.lastUs.store(us, std::memory_order_relaxed);
             if (us > st.maxUs.load(std::memory_order_relaxed)) st.maxUs.store(us, std::memory_order_relaxed);
             st.blocks.fetch_add(1, std::memory_order_relaxed);
-            st.faulted.store(v.engine().faulted() ? 1u : 0u, std::memory_order_relaxed);
+            if (v.engine().faulted()) {   // a JIT failure or a runaway block: silent for good. Let the
+                st.faulted.store(1, std::memory_order_relaxed);   // supervisor restart us and replay the state.
+                logf("engine %d fault: %s", k, v.engine().faultReason().c_str());
+                return 6;
+            }
         }
         ++next;
         s.produced.store(next, std::memory_order_release);

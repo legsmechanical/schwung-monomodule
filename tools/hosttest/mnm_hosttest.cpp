@@ -2,7 +2,10 @@
 // callback (128 frames every 2.9 ms), outside Move. Exercises boot, notes, machine switches, a killed
 // engine process (respawn + state replay) and unload.
 //
-//   mnm-hosttest <module-dir> [seconds-per-phase=4]
+//   mnm-hosttest <module-dir> [seconds-per-phase=4] [late-os | destroy-in-boot]
+//
+// late-os: the OS file is moved away before create and put back 3 s later (upload after adding the module).
+// destroy-in-boot: destroy while the engine is still pre-warming.
 //
 // The module dir holds module.json's files: dsp.so or monomodule-fx.so, mnm-engine, os/<OS file>.
 #include <chrono>
@@ -38,6 +41,9 @@ int main(int argc, char** argv)
     if (!fx) syn = reinterpret_cast<move_plugin_init_v2_fn>(dlsym(so, MOVE_PLUGIN_INIT_V2_SYMBOL))(&host);
     else afx = reinterpret_cast<audio_fx_init_v2_fn>(dlsym(so, AUDIO_FX_INIT_V2_SYMBOL))(&host);
 
+    const std::string mode = argc > 3 ? argv[3] : "";
+    const std::string osf = dir + "/os/Elektron_SFX6-60_OS1.32B.syx";
+    if (mode == "late-os") std::rename(osf.c_str(), (osf + ".away").c_str());
     auto t0 = Clock::now();
     void* inst = fx ? afx->create_instance(dir.c_str(), nullptr) : syn->create_instance(dir.c_str(), nullptr);
     std::printf("create_instance: %.2f ms\n", std::chrono::duration<double, std::milli>(Clock::now() - t0).count());
@@ -64,6 +70,22 @@ int main(int argc, char** argv)
         std::printf("%-28s rms %7.1f  nonzero %5.1f%%  status %s\n", label, std::sqrt(sum2 / std::max(1L, n)), 100.0 * nonzero / std::max(1L, n), get("status").c_str());
     };
 
+    if (mode == "destroy-in-boot") {
+        run(0.2, "booting");
+        const auto st = get("status");
+        const int pid = std::atoi(st.c_str() + st.find("\"pid\":") + 6);
+        fx ? afx->destroy_instance(inst) : syn->destroy_instance(inst);
+        std::this_thread::sleep_for(std::chrono::milliseconds(600));
+        std::printf("destroy during boot (pid %d): engine %s\n", pid, pid > 0 && kill(pid, 0) == 0 ? "STILL RUNNING" : "gone");
+        return 0;
+    }
+    if (mode == "late-os") {
+        char e[256] = {};
+        run(3, "no OS file");
+        (fx ? nullptr : syn->get_error) ? syn->get_error(inst, e, sizeof e) : 0;
+        std::printf("error while missing: %s\n", e);
+        std::rename((osf + ".away").c_str(), osf.c_str());
+    }
     t0 = Clock::now();
     while (get("status").find("\"phase\":3") == std::string::npos) {
         run(0.1, "");
@@ -93,9 +115,13 @@ int main(int argc, char** argv)
         set("machine", "REVERB"); run(secs, "REVERB on a sine");
     }
     std::printf("worst callback: %.1f us\n", worstCallUs);
+    const auto st = get("status");
+    const int pid = std::atoi(st.c_str() + st.find("\"pid\":") + 6);
     t0 = Clock::now();
     fx ? afx->destroy_instance(inst) : syn->destroy_instance(inst);
     std::printf("destroy_instance: %.1f ms\n", std::chrono::duration<double, std::milli>(Clock::now() - t0).count());
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    std::printf("engine pid %d after destroy: %s\n", pid, pid > 0 && kill(pid, 0) == 0 ? "STILL RUNNING" : "gone");
     dlclose(so);
     return 0;
 }

@@ -70,8 +70,7 @@ struct Instance {
     std::atomic<shm::Segment*> seg{nullptr};
     std::atomic<uint32_t> segGen{0};        // bumped by the supervisor after each (re)spawn
     uint32_t replayedGen = 0;               // callback: last generation the table was replayed into
-    std::atomic<uint32_t> stop{0};          // callback -> supervisor
-    std::atomic<uint32_t> supervisorWake{0};
+    std::atomic<uint32_t> stop{0};          // callback -> supervisor; also the supervisor's futex word
     std::atomic<uint32_t> respawns{0};
     Params params;
     int depth = kDefaultDepth;
@@ -82,15 +81,22 @@ struct Instance {
 
 // ---------------------------------------------------------------------------------------------------- helpers
 
-void futexWake(std::atomic<uint32_t>* a)
+// The segment clock is shared with the child process: a shared futex. In-process words use private
+// futexes, and a private FUTEX_WAKE never dereferences its address (destroy relies on that).
+void futexWakeShared(std::atomic<uint32_t>* a)
 {
     syscall(SYS_futex, reinterpret_cast<uint32_t*>(a), FUTEX_WAKE, 1, nullptr, nullptr, 0);
 }
 
-void futexWaitMs(std::atomic<uint32_t>* a, uint32_t expected, int ms)
+void futexWakePrivate(std::atomic<uint32_t>* a)
+{
+    syscall(SYS_futex, reinterpret_cast<uint32_t*>(a), FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, nullptr, nullptr, 0);
+}
+
+void futexWaitPrivateMs(std::atomic<uint32_t>* a, uint32_t expected, int ms)
 {
     timespec ts{ms / 1000, (ms % 1000) * 1000000L};
-    syscall(SYS_futex, reinterpret_cast<uint32_t*>(a), FUTEX_WAIT, expected, &ts, nullptr, 0);
+    syscall(SYS_futex, reinterpret_cast<uint32_t*>(a), FUTEX_WAIT | FUTEX_PRIVATE_FLAG, expected, &ts, nullptr, 0);
 }
 
 void push(Instance& in, shm::Op op, int a = 0, int b = 0, int c = 0)
@@ -131,6 +137,17 @@ const char* machineName(int m)
     return d ? d->name : "?";
 }
 
+bool validMachine(int m)
+{
+    if (m < 0 || m > 255 || !host::machineDef(host::Machine(m))) return false;
+#if MNM_FX
+    for (const auto f : kFxMachines) if (int(f) == m) return true;
+    return false;
+#else
+    return true;
+#endif
+}
+
 bool parseMachine(const char* val, int& out)
 {
     char* end = nullptr;
@@ -151,17 +168,17 @@ bool parseMachine(const char* val, int& out)
 
 // ---------------------------------------------------------------------------------------------------- supervisor
 
-bool spawnChild(Instance& in, int fd, pid_t& pid)
+bool spawnChild(Instance& in, int fd, const char* osPath, pid_t& pid)
 {
     char exe[600], os[600], log[600], prio[8];
     std::snprintf(exe, sizeof exe, "%s/mnm-engine", in.moduleDir);
-    std::snprintf(os, sizeof os, "%s/%s", in.moduleDir, kOsFile);
+    std::snprintf(os, sizeof os, "%s", osPath);
     std::snprintf(log, sizeof log, "%s/mnm-engine.log", in.moduleDir);
     std::snprintf(prio, sizeof prio, "%d", kDefaultFifo);
     posix_spawn_file_actions_t fa;
     posix_spawn_file_actions_init(&fa);
     posix_spawn_file_actions_adddup2(&fa, fd, 3);
-    posix_spawn_file_actions_addopen(&fa, 1, log, O_WRONLY | O_CREAT | O_APPEND, 0644);   // the emulator prints
+    posix_spawn_file_actions_addopen(&fa, 1, log, O_WRONLY | O_CREAT | O_TRUNC, 0644);   // the emulator prints; one boot's worth
     posix_spawn_file_actions_adddup2(&fa, 1, 2);
     char* argv[] = {exe, os, log, prio, nullptr};
     const int rc = posix_spawn(&pid, exe, &fa, nullptr, argv, environ);
@@ -189,10 +206,35 @@ void resetSegment(shm::Segment& s, bool fx, int depth)
 // so the supervisor frees the instance itself once destroy has handed it over.
 void freeWhenStopped(Instance& in)
 {
-    // stop is set by destroy_instance; an early return (missing OS file) must still wait for it
-    while (!in.stop.load(std::memory_order_acquire)) futexWaitMs(&in.supervisorWake, in.supervisorWake.load(), 1000);
+    while (!in.stop.load(std::memory_order_acquire)) futexWaitPrivateMs(&in.stop, 0, 1000);
     in.~Instance();
     std::free(&in);
+}
+
+// Sleeps up to ms, returning early (true) when destroy has asked the supervisor to stop.
+bool sleepOrStop(Instance& in, int ms)
+{
+    if (!in.stop.load(std::memory_order_acquire)) futexWaitPrivateMs(&in.stop, 0, ms);
+    return in.stop.load(std::memory_order_acquire) != 0;
+}
+
+// The OS file: this module's os/ folder, else the sibling Monomodule's, so it is uploaded once.
+bool findOsFile(const Instance& in, char* out, size_t len)
+{
+    const char* candidates[] = {"%s/%s", "%s/../../audio_fx/monomodule-fx/%s", "%s/../../sound_generators/monomodule-one/%s"};
+    struct stat st{};
+    for (const char* fmt : candidates) {
+        std::snprintf(out, len, fmt, in.moduleDir, kOsFile);
+        if (stat(out, &st) == 0 && st.st_size > 0) return true;
+    }
+    return false;
+}
+
+void describeExit(Instance& in, int status)
+{
+    if (WIFSIGNALED(status)) std::snprintf(in.error, sizeof in.error, "engine process crashed (signal %d)", WTERMSIG(status));
+    else if (WIFEXITED(status) && WEXITSTATUS(status) == 6) std::snprintf(in.error, sizeof in.error, "engine fault (restarted)");
+    else if (WIFEXITED(status)) std::snprintf(in.error, sizeof in.error, "engine process exited (%d)", WEXITSTATUS(status));
 }
 
 void* supervise(void* arg)
@@ -204,16 +246,15 @@ void* supervise(void* arg)
     cpu_set_t cpus; CPU_ZERO(&cpus); CPU_SET(0, &cpus); CPU_SET(1, &cpus); CPU_SET(2, &cpus);
     sched_setaffinity(0, sizeof cpus, &cpus);
 
-    char osPath[600];
-    std::snprintf(osPath, sizeof osPath, "%s/%s", in.moduleDir, kOsFile);
-    struct stat st{};
-    if (stat(osPath, &st) != 0) {
-        std::snprintf(in.error, sizeof in.error, "Monomachine OS file missing: add %s (free download from Elektron)", kOsFile);
-        freeWhenStopped(in);
-        return nullptr;
+    // Wait for the OS file: the user may upload it after adding the module.
+    char osPath[700];
+    while (!findOsFile(in, osPath, sizeof osPath)) {
+        std::snprintf(in.error, sizeof in.error, "Monomachine OS file missing: upload %s (free download from Elektron)", kOsFile + 3);
+        if (sleepOrStop(in, 2000)) { freeWhenStopped(in); return nullptr; }
     }
+    in.error[0] = 0;
 
-    const int fd = int(syscall(SYS_memfd_create, "mnm-shm", 0));
+    const int fd = int(syscall(SYS_memfd_create, "mnm-shm", 1u /* MFD_CLOEXEC: other children must not inherit it */));
     if (fd < 0 || ftruncate(fd, sizeof(shm::Segment)) != 0) {
         std::snprintf(in.error, sizeof in.error, "shared memory: %s", std::strerror(errno));
         if (fd >= 0) close(fd);
@@ -230,57 +271,69 @@ void* supervise(void* arg)
     new (seg) shm::Segment();
     seg->magic = shm::kMagic; seg->version = shm::kVersion;
 
+    constexpr int kMaxQuickFailures = 5;       // consecutive failures before giving up
+    constexpr int kBootTimeoutPolls = 300;     // 30 s to reach Ready (0.4 s on a CM5)
     const bool fx = MNM_FX != 0;
     pid_t pid = -1;
     uint32_t lastHeartbeat = 0, lastHostBlock = 0;
-    int stalledPolls = 0, failures = 0;
-    bool published = false;
+    int stalledPolls = 0, bootPolls = 0, failures = 0;
+    bool published = false, gaveUp = false;
     while (!in.stop.load(std::memory_order_acquire)) {
         if (pid <= 0) {
-            if (failures >= 5) {   // give up rather than spawn in a loop; the error says why
-                futexWaitMs(&in.supervisorWake, in.supervisorWake.load(), 1000);
-                continue;
-            }
+            if (gaveUp || failures >= kMaxQuickFailures) { gaveUp = true; if (sleepOrStop(in, 1000)) break; continue; }
+            if (failures > 1 && sleepOrStop(in, 1000 * (failures - 1))) break;   // first restart at once, then back off
             resetSegment(*seg, fx, in.depth);
-            if (!spawnChild(in, fd, pid)) { pid = -1; ++failures; continue; }
+            if (!spawnChild(in, fd, osPath, pid)) { pid = -1; ++failures; continue; }
             if (!published) { in.seg.store(seg, std::memory_order_release); published = true; }
             in.segGen.fetch_add(1, std::memory_order_release);   // the callback replays the table
-            stalledPolls = 0;
+            stalledPolls = 0; bootPolls = 0;
         }
-        futexWaitMs(&in.supervisorWake, in.supervisorWake.load(), 100);
+        if (sleepOrStop(in, 100)) break;
 
         int status = 0;
         if (waitpid(pid, &status, WNOHANG) == pid) {
-            if (seg->phase.load() == uint32_t(shm::Phase::Failed)) {
+            const bool bootFailed = seg->phase.load() == uint32_t(shm::Phase::Failed);
+            seg->phase.store(uint32_t(shm::Phase::Spawning), std::memory_order_release);   // callback: silence, not underruns
+            if (bootFailed) {
                 std::snprintf(in.error, sizeof in.error, "%s", seg->error);
-                failures = 5;   // a boot failure (bad OS file) will not fix itself
+                gaveUp = true;   // a boot failure (bad OS file) will not fix itself
             } else {
+                describeExit(in, status);
                 ++failures;
             }
             pid = -1;
             in.respawns.fetch_add(1);
             continue;
         }
-        // watchdog: the callback is advancing but the child's loop is not -> hung
+        const bool ready = seg->phase.load() == uint32_t(shm::Phase::Ready);
         const uint32_t hb = seg->heartbeat.load(), hostBlock = seg->host_block.load();
-        if (seg->phase.load() == uint32_t(shm::Phase::Ready) && hb == lastHeartbeat && hostBlock != lastHostBlock) {
-            if (++stalledPolls >= 10) {   // ~1 s
-                kill(pid, SIGKILL);
-                waitpid(pid, &status, 0);
-                pid = -1;
-                in.respawns.fetch_add(1);
-                continue;
-            }
+        bool hung = false;
+        if (!ready) {
+            hung = ++bootPolls >= kBootTimeoutPolls;   // stuck loading or pre-warming
+            if (hung) std::snprintf(in.error, sizeof in.error, "engine did not start within 30 s");
+        } else if (hb == lastHeartbeat && hostBlock != lastHostBlock) {
+            hung = ++stalledPolls >= 10;   // ~1 s: the callback advances, the child's loop does not
+            if (hung) std::snprintf(in.error, sizeof in.error, "engine stopped responding (restarted)");
         } else {
             stalledPolls = 0;
-            if (seg->phase.load() == uint32_t(shm::Phase::Ready)) failures = 0;
+            if (failures && hostBlock - lastHostBlock > 0) failures = 0;   // healthy again
         }
+        if (hung) {
+            seg->phase.store(uint32_t(shm::Phase::Spawning), std::memory_order_release);
+            kill(pid, SIGKILL);
+            waitpid(pid, &status, 0);
+            pid = -1;
+            ++failures;
+            in.respawns.fetch_add(1);
+            continue;
+        }
+        if (ready && !failures && std::strncmp(in.error, "engine", 6) == 0) in.error[0] = 0;
         lastHeartbeat = hb; lastHostBlock = hostBlock;
     }
 
     if (pid > 0) {
         seg->shutdown.store(1, std::memory_order_release);
-        futexWake(&seg->host_block);
+        futexWakeShared(&seg->host_block);
         int status = 0;
         for (int i = 0; i < 20 && waitpid(pid, &status, WNOHANG) != pid; ++i) usleep(5000);
         if (waitpid(pid, &status, WNOHANG) == 0) { kill(pid, SIGKILL); waitpid(pid, &status, 0); }
@@ -316,6 +369,7 @@ void* createInstance(const char* moduleDir, const char*)
 #else
     in->params.machine = int(host::Machine::FM_PAR);
 #endif
+    in->params.level = 100;
     loadMachineDefaults(in->params);
     pinSelf();
     pthread_attr_t attr;
@@ -331,10 +385,11 @@ void destroyInstance(void* p)
     auto* in = static_cast<Instance*>(p);
     if (!in) return;
     if (!in->supervisorStarted) { in->~Instance(); std::free(in); return; }
-    // Hand the instance to the supervisor: it stops the child, unmaps, and frees. Nothing here waits.
+    // Hand the instance to the supervisor: it stops the child, unmaps, and frees. Nothing here waits, and
+    // nothing touches the instance after the store (the supervisor may free it at once; a private
+    // FUTEX_WAKE does not dereference the address).
     in->stop.store(1, std::memory_order_release);
-    in->supervisorWake.fetch_add(1);
-    futexWake(&in->supervisorWake);
+    futexWakePrivate(&in->stop);
 }
 
 void onMidi(void* p, const uint8_t* msg, int len, int)
@@ -366,6 +421,8 @@ void readState(Instance& in, const char* val)
     Params p = in.params;
     int depth = in.depth;
     if (std::sscanf(s, "m=%d;l=%d;d=%d;p=", &p.machine, &p.level, &depth) != 3) return;
+    if (!validMachine(p.machine)) return;
+    p.level = std::clamp(p.level, 0, 127);
     const char* v = std::strstr(s, "p=");
     if (!v) return;
     v += 2;
@@ -494,7 +551,7 @@ void playBlock(shm::Segment& s, uint32_t b, int16_t* out, int frames)
 void advance(shm::Segment& s, uint32_t hb)
 {
     s.host_block.store(hb + 1, std::memory_order_release);
-    futexWake(&s.host_block);
+    futexWakeShared(&s.host_block);
 }
 
 #if !MNM_FX

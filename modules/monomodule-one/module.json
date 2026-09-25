@@ -136,7 +136,7 @@
         "type": "int",
         "min": 0,
         "max": 127,
-        "default": 64
+        "default": 100
       },
       {
         "key": "depth",

@@ -118,7 +118,7 @@
         "type": "int",
         "min": 0,
         "max": 127,
-        "default": 64
+        "default": 100
       },
       {
         "key": "depth",
@@ -128,6 +128,7 @@
         "max": 4,
         "default": 2
       }
-    ]
+    ],
+    "requires_continuous_processing": true
   }
 }
