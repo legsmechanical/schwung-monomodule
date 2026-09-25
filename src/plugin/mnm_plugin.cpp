@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <new>
+#include <utility>
 
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -72,6 +73,8 @@ struct Instance {
     uint32_t replayedGen = 0;               // callback: last generation the table was replayed into
     std::atomic<uint32_t> stop{0};          // callback -> supervisor; also the supervisor's futex word
     std::atomic<uint32_t> respawns{0};
+    uint32_t notesIn = 0;      // callback-only diagnostics, read by get_param("status") on the same thread
+    int32_t peak = 0;          // max |sample| of the output since the last status read (int16)
     Params params;
     int depth = kDefaultDepth;
     float lastBpm = 0.f;
@@ -397,7 +400,7 @@ void onMidi(void* p, const uint8_t* msg, int len, int)
     auto& in = *static_cast<Instance*>(p);
     if (len < 1) return;
     const uint8_t type = msg[0] & 0xF0;
-    if (type == 0x90 && len >= 3 && msg[2] > 0) push(in, shm::Op::NoteOn, msg[1]);
+    if (type == 0x90 && len >= 3 && msg[2] > 0) { push(in, shm::Op::NoteOn, msg[1]); ++in.notesIn; }
     else if ((type == 0x80 && len >= 3) || (type == 0x90 && len >= 3)) push(in, shm::Op::NoteOff, msg[1]);
     else if (type == 0xB0 && len >= 3 && (msg[1] == 123 || msg[1] == 120)) push(in, shm::Op::AllNotesOff);
 }
@@ -493,8 +496,8 @@ int getParam(void* ptr, const char* key, char* buf, int len)
         auto* s = in.seg.load();
         if (!s) return std::snprintf(buf, size_t(len), "{\"phase\":\"none\",\"error\":\"%s\"}", in.error);
         return std::snprintf(buf, size_t(len),
-            "{\"phase\":%u,\"pid\":%u,\"underruns\":%u,\"skips\":%u,\"respawns\":%u,\"last_us\":%u,\"max_us\":%u,\"faulted\":%u,\"depth\":%d}",
-            s->phase.load(), s->child_pid.load(), s->underruns.load(), s->skips.load(), in.respawns.load(), s->stats[0].lastUs.load(),
+            "{\"notes\":%u,\"peak\":%d,\"phase\":%u,\"pid\":%u,\"underruns\":%u,\"skips\":%u,\"respawns\":%u,\"last_us\":%u,\"max_us\":%u,\"faulted\":%u,\"depth\":%d}",
+            in.notesIn, std::exchange(in.peak, 0), s->phase.load(), s->child_pid.load(), s->underruns.load(), s->skips.load(), in.respawns.load(), s->stats[0].lastUs.load(),
             s->stats[0].maxUs.load(), s->stats[0].faulted.load(), in.depth);
     }
     for (int pg = 0; pg < 4; ++pg) {
@@ -548,6 +551,11 @@ void playBlock(shm::Segment& s, uint32_t b, int16_t* out, int frames)
     for (int i = 0; i < frames * 2; ++i) out[i] = toS16(src[i]);
 }
 
+void notePeak(Instance& in, const int16_t* out, int frames)
+{
+    for (int i = 0; i < frames * 2; ++i) in.peak = std::max<int32_t>(in.peak, std::abs(int32_t(out[i])));
+}
+
 void advance(shm::Segment& s, uint32_t hb)
 {
     s.host_block.store(hb + 1, std::memory_order_release);
@@ -562,6 +570,7 @@ void renderBlock(void* ptr, int16_t* out, int frames)
     if (!s || frames != shm::kFrames) { std::memset(out, 0, size_t(frames) * 2 * sizeof(int16_t)); return; }
     const uint32_t hb = s->host_block.load(std::memory_order_relaxed);
     playBlock(*s, hb, out, frames);
+    notePeak(in, out, frames);
     advance(*s, hb);
 }
 
@@ -580,6 +589,7 @@ void processBlock(void* ptr, int16_t* io, int frames)
     const uint32_t depth = s->depth.load(std::memory_order_relaxed);
     if (hb >= depth) playBlock(*s, hb - depth, io, frames);
     else std::memset(io, 0, size_t(frames) * 2 * sizeof(int16_t));
+    notePeak(in, io, frames);
     advance(*s, hb);
 }
 

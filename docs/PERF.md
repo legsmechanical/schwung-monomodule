@@ -66,6 +66,18 @@ touching P, so compiled code survives and the voice is exactly a fresh one (`MNM
 mnm-golden` = baseline). After it every switch is a normal block (0.3-0.5 ms), except the DSP's own
 work: REVERB ~2.5 ms once when engaged, VO-6 ~0.95 ms per block throughout.
 
+## Inside Move (2026-09-25, CM5, stock Schwung 1.4.0, Monomodule One on track 1, notes as external MIDI)
+
+`tools/devicetest/test_monomodule.py`: every machine plays, 0 underruns at latency 1 and 2 over 20 s
+of notes every 150 ms with machine switches, engine kill -> back with state, Monomodule FX in fx1:
+every FX machine processes, 0 underruns.
+
+Engine time per 128-frame block inside Move: 400-670 us (VO-6 and REVERB peaks 2.2-2.5 ms) — about
+1.5-2x `mnm-bench`. The CPUs run the `ondemand` governor (1.5-2.4 GHz on this CM5): the bench keeps
+a core busy and boosts it, the real engine works in bursts and mostly runs near 1.5-1.6 GHz. **The
+in-Move numbers are the real ones**; bench numbers are for comparing changes. A CM4's governor
+range decides its real cost — another reason the beta must report load from real devices.
+
 ## Bit-exactness gate
 
 `mnm-golden <os.syx>` renders a fixed script on all 22 machines (notes, parameter sweeps on every
