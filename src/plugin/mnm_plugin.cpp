@@ -34,6 +34,7 @@
 #include "host_api/plugin_api_v1.h"
 #include "host_api/audio_fx_api_v2.h"
 #include "host/Machines.h"
+#include "generated/mnm_ui.h"
 #include "mnm_shm.h"
 
 extern char** environ;
@@ -48,20 +49,33 @@ constexpr const char* kOsFile = "os/Elektron_SFX6-60_OS1.32B.syx";
 constexpr int kDefaultDepth = 2;
 constexpr int kDefaultFifo = 10;
 
-// ---- parameters (the bare test surface; the real UI is designed separately)
-// SYN/AMP/FILT/EFX pages x 8 raw 0-127 values, plus machine and level. Keys: "machine", "level",
-// "syn1".."syn8", "amp1".., "filt1".., "efx1"..; "depth" (latency, blocks ahead).
-constexpr const char* kPageKeys[4] = {"syn", "amp", "filt", "efx"};
-
+// ---- parameters: generated from upstream's display spec (tools/gen/gen_ui.py -> generated/mnm_ui.h). Every
+// knob is stored RAW (0..127, the kit byte) and converted to its display value (bipolar -64..63, list and
+// readout names) at the set/get boundary. Keys: "machine", "level", "depth", "load" (read), the SYN keys of
+// every machine ("sid_wave", ...), "amp_atk".., "filt_base".., "efx_eqf".., "lfo1_page".. (LFO DEST: one key
+// per PAGE value, "lfo1_dest_ptch".., all the same raw slot).
 #if MNM_FX
-constexpr host::Machine kFxMachines[] = {host::Machine::THRU, host::Machine::REVERB, host::Machine::CHORUS,
-    host::Machine::DYNAMIX, host::Machine::RINGMOD, host::Machine::PHASER, host::Machine::FLANGER};
+constexpr const ui::ParamDef* kDefs = ui::kFXParams;
+constexpr int kDefCount = ui::kFXParamCount;
+constexpr const ui::MachineDef* kMachineList = ui::kFXMachines;
+constexpr int kMachineCount = ui::kFXMachineCount;
+constexpr const char* kHierarchy = ui::kFXHierarchy;
+#else
+constexpr const ui::ParamDef* kDefs = ui::kONEParams;
+constexpr int kDefCount = ui::kONEParamCount;
+constexpr const ui::MachineDef* kMachineList = ui::kONEMachines;
+constexpr int kMachineCount = ui::kONEMachineCount;
+constexpr const char* kHierarchy = ui::kONEHierarchy;
 #endif
+constexpr int kMaxMachineId = 40;   // host::Machine values go up to 33 (DDRW / DENS)
 
 struct Params {
     int machine = 0;              // host::Machine value
     int level = 100;
-    int page[4][8] = {};
+    int page[4][8] = {};          // raw SYN / AMP / FILT / EFX of the current machine
+    int lfo[3][8] = {};           // raw LFO 1-3
+    int synMem[kMaxMachineId][8] = {};   // each machine's last SYN values, restored when it is picked again
+    bool synMemSet[kMaxMachineId] = {};
 };
 
 struct Instance {
@@ -117,56 +131,119 @@ void replay(Instance& in)
     push(in, shm::Op::SetMachine, p.machine);   // loads the machine's page defaults: the pages go after it
     for (int pg = 0; pg < 4; ++pg)
         for (int k = 0; k < 8; ++k) push(in, shm::Op::SetParam, pg, k, p.page[pg][k]);
+    for (int l = 0; l < 3; ++l)
+        for (int k = 0; k < 8; ++k) push(in, shm::Op::SetLfo, l, k, p.lfo[l][k]);
     push(in, shm::Op::SetLevel, 0, 0, p.level);
     if (in.lastBpm > 0.f) push(in, shm::Op::SetBpm, 0, 0, int(std::lround(in.lastBpm * 100.f)));
 }
 
-// The page values a machine starts with (the table must match what the engine does on SetMachine).
-void loadMachineDefaults(Params& p)
+const ui::MachineDef* findMachine(int id)
 {
-    const auto m = host::Machine(p.machine);
-    const auto* def = host::machineDef(m);
-    for (int k = 0; k < 8; ++k) {
-        p.page[0][k] = def ? def->defaults[size_t(k)] : 0;
-        p.page[1][k] = host::isFxMachine(m) ? host::kDefaultAmpFx[size_t(k)] : host::kDefaultAmp[size_t(k)];
-        p.page[2][k] = host::kDefaultFilt[size_t(k)];
-        p.page[3][k] = host::kDefaultEfx[size_t(k)];
+    for (int i = 0; i < kMachineCount; ++i) if (kMachineList[i].id == id) return &kMachineList[i];
+    return nullptr;
+}
+
+bool validMachine(int m) { return findMachine(m) != nullptr; }
+
+// SYN defaults of a machine, and the shared pages / LFOs, from the generated table.
+void machineSynDefaults(int machine, int out[8])
+{
+    for (int k = 0; k < 8; ++k) out[k] = 0;
+    for (int i = 0; i < kDefCount; ++i)
+        if (kDefs[i].page == 0 && kDefs[i].machine == machine) out[kDefs[i].index] = kDefs[i].defaultRaw;
+}
+
+void loadDefaults(Params& p)
+{
+    machineSynDefaults(p.machine, p.page[0]);
+    for (int i = 0; i < kDefCount; ++i) {
+        const auto& d = kDefs[i];
+        if (d.page >= 1 && d.page <= 3) p.page[d.page][d.index] = d.defaultRaw;
+        else if (d.page >= 4) p.lfo[d.page - 4][d.index] = d.defaultRaw;
     }
 }
 
-const char* machineName(int m)
+// A new machine: the old one's SYN values are kept, the new one's come back (or start at its defaults).
+// The engine's SetMachine loads that machine's page defaults, so the SYN values are sent after it.
+void switchMachine(Instance& in, int m)
 {
-    const auto* d = host::machineDef(host::Machine(m));
-    return d ? d->name : "?";
-}
-
-bool validMachine(int m)
-{
-    if (m < 0 || m > 255 || !host::machineDef(host::Machine(m))) return false;
-#if MNM_FX
-    for (const auto f : kFxMachines) if (int(f) == m) return true;
-    return false;
-#else
-    return true;
-#endif
+    auto& p = in.params;
+    if (p.machine >= 0 && p.machine < kMaxMachineId) {
+        std::memcpy(p.synMem[p.machine], p.page[0], sizeof p.page[0]);
+        p.synMemSet[p.machine] = true;
+    }
+    p.machine = m;
+    if (m < kMaxMachineId && p.synMemSet[m]) std::memcpy(p.page[0], p.synMem[m], sizeof p.page[0]);
+    else machineSynDefaults(m, p.page[0]);
+    push(in, shm::Op::SetMachine, m);
+    for (int pg = 0; pg < 4; ++pg)   // SetMachine reloads every page's defaults in the engine: resend them all
+        for (int k = 0; k < 8; ++k) push(in, shm::Op::SetParam, pg, k, p.page[pg][k]);
 }
 
 bool parseMachine(const char* val, int& out)
 {
     char* end = nullptr;
     const long idx = std::strtol(val, &end, 10);
-#if MNM_FX
-    constexpr int kCount = int(sizeof kFxMachines / sizeof kFxMachines[0]);
-    if (end != val && *end == 0) { if (idx < 0 || idx >= kCount) return false; out = int(kFxMachines[idx]); return true; }
-    for (const auto m : kFxMachines) if (std::strcmp(val, machineName(int(m))) == 0) { out = int(m); return true; }
-#else
-    if (end != val && *end == 0) {   // an index into kMachineDefs (the enum's option order)
-        if (idx < 0 || idx >= host::kNumMachineDefs) return false;
-        out = int(host::kMachineDefs[idx].machine); return true;
+    if (end != val && *end == 0) {   // an index into the enum's options
+        if (idx < 0 || idx >= kMachineCount) return false;
+        out = kMachineList[idx].id; return true;
     }
-    for (const auto& d : host::kMachineDefs) if (std::strcmp(val, d.name) == 0) { out = int(d.machine); return true; }
-#endif
+    for (int i = 0; i < kMachineCount; ++i) if (std::strcmp(val, kMachineList[i].label) == 0) { out = kMachineList[i].id; return true; }
     return false;
+}
+
+const ui::ParamDef* findDef(const char* key)
+{
+    for (int i = 0; i < kDefCount; ++i) if (std::strcmp(kDefs[i].key, key) == 0) return &kDefs[i];
+    return nullptr;
+}
+
+constexpr int listIndex(int raw, int n) { return ((2 * raw + 1) * n) >> 8; }   // upstream SpecData.h
+constexpr int listRawMid(int idx, int n) { return (idx * 256 + 128) / (2 * n); }
+
+// Display value -> raw. Lists take an option name or index; numbers are clamped to their range.
+bool toRaw(const ui::ParamDef& d, const char* val, int& raw)
+{
+    if (d.kind == 2 || d.kind == 3) {
+        const int n = d.kind == 3 ? 128 : d.count;
+        int idx = -1;
+        for (int i = 0; i < n && d.values; ++i) if (std::strcmp(val, d.values[i]) == 0) { idx = i; break; }
+        if (idx < 0) {
+            char* end = nullptr;
+            const long v = std::strtol(val, &end, 10);
+            if (end == val || *end != 0) return false;
+            idx = int(std::clamp<long>(v, 0, n - 1));
+        }
+        raw = d.kind == 3 ? idx : listRawMid(idx, n);
+        return true;
+    }
+    char* end = nullptr;
+    const double v = std::strtod(val, &end);
+    if (end == val) return false;
+    const int iv = int(std::lround(v));
+    raw = d.kind == 1 ? std::clamp(iv + 64, 0, 127) : std::clamp(iv, 0, 127);
+    return true;
+}
+
+int fromRaw(const ui::ParamDef& d, int raw, char* buf, int len)
+{
+    if (d.kind == 3 && d.values) return std::snprintf(buf, size_t(len), "%s", d.values[std::clamp(raw, 0, 127)]);
+    if (d.kind == 2 && d.values) return std::snprintf(buf, size_t(len), "%s", d.values[std::clamp(listIndex(raw, d.count), 0, d.count - 1)]);
+    return std::snprintf(buf, size_t(len), "%d", d.kind == 1 ? raw - 64 : raw);
+}
+
+int* rawSlot(Params& p, const ui::ParamDef& d)
+{
+    if (d.page == 0) {
+        if (d.machine == p.machine) return &p.page[0][d.index];
+        if (d.machine >= 0 && d.machine < kMaxMachineId) {   // another machine's knob: its remembered value
+            if (!p.synMemSet[d.machine]) { machineSynDefaults(d.machine, p.synMem[d.machine]); p.synMemSet[d.machine] = true; }
+            return &p.synMem[d.machine][d.index];
+        }
+        return nullptr;
+    }
+    if (d.page <= 3) return &p.page[d.page][d.index];
+    return &p.lfo[d.page - 4][d.index];
 }
 
 // ---------------------------------------------------------------------------------------------------- supervisor
@@ -373,7 +450,7 @@ void* createInstance(const char* moduleDir, const char*)
     in->params.machine = int(host::Machine::FM_PAR);
 #endif
     in->params.level = 100;
-    loadMachineDefaults(in->params);
+    loadDefaults(in->params);
     pinSelf();
     pthread_attr_t attr;
     pthread_attr_init(&attr);
@@ -405,16 +482,28 @@ void onMidi(void* p, const uint8_t* msg, int len, int)
     else if (type == 0xB0 && len >= 3 && (msg[1] == 123 || msg[1] == 120)) push(in, shm::Op::AllNotesOff);
 }
 
-// "state": the whole table, self-contained. Format: m=<machine>;l=<level>;d=<depth>;p=<32 comma-separated>
+// "state": the current sound, self-contained. m=<machine>;l=<level>;d=<depth>;p=<32 raw page values>;f=<24 raw LFO>
 int writeState(const Instance& in, char* buf, int len)
 {
     const auto& p = in.params;
     int n = std::snprintf(buf, size_t(len), "{\"mnm\":\"m=%d;l=%d;d=%d;p=", p.machine, p.level, in.depth);
-    for (int pg = 0; pg < 4; ++pg)
-        for (int k = 0; k < 8 && n < len; ++k)
-            n += std::snprintf(buf + n, size_t(len - n), "%d%s", p.page[pg][k], (pg == 3 && k == 7) ? "" : ",");
+    for (int i = 0; i < 32 && n < len; ++i) n += std::snprintf(buf + n, size_t(len - n), "%d%s", p.page[i / 8][i % 8], i == 31 ? "" : ",");
+    if (n < len) n += std::snprintf(buf + n, size_t(len - n), ";f=");
+    for (int i = 0; i < 24 && n < len; ++i) n += std::snprintf(buf + n, size_t(len - n), "%d%s", p.lfo[i / 8][i % 8], i == 23 ? "" : ",");
     if (n < len) n += std::snprintf(buf + n, size_t(len - n), "\"}");
     return n < len ? n : -1;
+}
+
+bool readInts(const char* v, int* out, int count)
+{
+    for (int i = 0; i < count; ++i) {
+        char* end = nullptr;
+        const long x = std::strtol(v, &end, 10);
+        if (end == v) return false;
+        out[i] = int(std::clamp<long>(x, 0, 127));
+        v = *end == ',' ? end + 1 : end;
+    }
+    return true;
 }
 
 void readState(Instance& in, const char* val)
@@ -427,19 +516,25 @@ void readState(Instance& in, const char* val)
     if (!validMachine(p.machine)) return;
     p.level = std::clamp(p.level, 0, 127);
     const char* v = std::strstr(s, "p=");
-    if (!v) return;
-    v += 2;
-    for (int i = 0; i < 32; ++i) {
-        char* end = nullptr;
-        const long x = std::strtol(v, &end, 10);
-        if (end == v) return;   // malformed: keep the current table
-        p.page[i / 8][i % 8] = int(std::clamp<long>(x, 0, 127));
-        v = *end == ',' ? end + 1 : end;
+    int pages[32];
+    if (!v || !readInts(v + 2, pages, 32)) return;   // malformed: keep the current table
+    for (int i = 0; i < 32; ++i) p.page[i / 8][i % 8] = pages[i];
+    if (const char* f = std::strstr(s, ";f=")) {     // LFOs (absent in states from before they were exposed)
+        int lfo[24];
+        if (readInts(f + 3, lfo, 24)) for (int i = 0; i < 24; ++i) p.lfo[i / 8][i % 8] = lfo[i];
     }
     in.params = p;
     in.depth = std::clamp(depth, 1, shm::kMaxDepth);
     if (auto* sg = in.seg.load()) sg->depth.store(uint32_t(in.depth));
     replay(in);
+}
+
+int loadPercent(const Instance& in)
+{
+    auto* s = in.seg.load(std::memory_order_acquire);
+    if (!s || s->phase.load() != uint32_t(shm::Phase::Ready)) return 0;
+    if (s->stats[0].parked.load()) return 0;
+    return int(std::lround(100.0 * s->stats[0].lastUs.load() / (1e6 * shm::kFrames / 44100.0)));
 }
 
 void setParam(void* ptr, const char* key, const char* val)
@@ -450,29 +545,25 @@ void setParam(void* ptr, const char* key, const char* val)
     if (std::strcmp(k, "state") == 0) { readState(in, val); return; }
     if (std::strcmp(k, "machine") == 0) {
         int m;
-        if (parseMachine(val, m) && m != in.params.machine) {
-            in.params.machine = m;
-            loadMachineDefaults(in.params);
-            push(in, shm::Op::SetMachine, m);
-        }
+        if (parseMachine(val, m) && m != in.params.machine) switchMachine(in, m);
         return;
     }
-    const int v = std::clamp(std::atoi(val), 0, 127);
-    if (std::strcmp(k, "level") == 0) { in.params.level = v; push(in, shm::Op::SetLevel, 0, 0, v); return; }
+    if (std::strcmp(k, "level") == 0) { in.params.level = std::clamp(std::atoi(val), 0, 127); push(in, shm::Op::SetLevel, 0, 0, in.params.level); return; }
     if (std::strcmp(k, "depth") == 0) {
         in.depth = std::clamp(std::atoi(val), 1, shm::kMaxDepth);
         if (auto* s = in.seg.load()) s->depth.store(uint32_t(in.depth));
         return;
     }
-    for (int pg = 0; pg < 4; ++pg) {
-        const size_t n = std::strlen(kPageKeys[pg]);
-        if (std::strncmp(k, kPageKeys[pg], n) == 0 && k[n] >= '1' && k[n] <= '8' && k[n + 1] == 0) {
-            const int idx = k[n] - '1';
-            in.params.page[pg][idx] = v;
-            push(in, shm::Op::SetParam, pg, idx, v);
-            return;
-        }
-    }
+    const auto* d = findDef(k);
+    if (!d) return;
+    int raw;
+    if (!toRaw(*d, val, raw)) return;
+    int* slot = rawSlot(in.params, *d);
+    if (!slot) return;
+    *slot = raw;
+    if (d->page == 0 && d->machine != in.params.machine) return;   // remembered for when that machine is picked
+    if (d->page <= 3) push(in, shm::Op::SetParam, d->page, d->index, raw);
+    else push(in, shm::Op::SetLfo, d->page - 4, d->index, raw);
 }
 
 int getParam(void* ptr, const char* key, char* buf, int len)
@@ -481,31 +572,32 @@ int getParam(void* ptr, const char* key, char* buf, int len)
     if (!key || !buf || len <= 0) return -1;
     const char* k = std::strrchr(key, ':'); k = k ? k + 1 : key;
     if (std::strcmp(k, "state") == 0) return writeState(in, buf, len);
+    if (std::strcmp(k, "ui_hierarchy") == 0) {
+        const int n = int(std::strlen(kHierarchy));
+        if (n >= len) return -1;
+        std::memcpy(buf, kHierarchy, size_t(n) + 1);
+        return n;
+    }
     if (std::strcmp(k, "machine") == 0) {
-#if MNM_FX
-        for (int i = 0; i < int(sizeof kFxMachines / sizeof kFxMachines[0]); ++i)
-            if (int(kFxMachines[i]) == in.params.machine) return std::snprintf(buf, size_t(len), "%s", machineName(in.params.machine));
-        return -1;
-#else
-        return std::snprintf(buf, size_t(len), "%s", machineName(in.params.machine));
-#endif
+        const auto* m = findMachine(in.params.machine);
+        return m ? std::snprintf(buf, size_t(len), "%s", m->label) : -1;
     }
     if (std::strcmp(k, "level") == 0) return std::snprintf(buf, size_t(len), "%d", in.params.level);
     if (std::strcmp(k, "depth") == 0) return std::snprintf(buf, size_t(len), "%d", in.depth);
+    if (std::strcmp(k, "load") == 0) return std::snprintf(buf, size_t(len), "%d", loadPercent(in));
     if (std::strcmp(k, "status") == 0) {   // diagnostics
         auto* s = in.seg.load();
         if (!s) return std::snprintf(buf, size_t(len), "{\"phase\":\"none\",\"error\":\"%s\"}", in.error);
         return std::snprintf(buf, size_t(len),
             "{\"notes\":%u,\"peak\":%d,\"phase\":%u,\"pid\":%u,\"underruns\":%u,\"skips\":%u,\"respawns\":%u,\"last_us\":%u,\"max_us\":%u,\"faulted\":%u,\"parked\":%u,\"parked_blocks\":%u,\"depth\":%d}",
-            in.notesIn, std::exchange(in.peak, 0), s->phase.load(), s->child_pid.load(), s->underruns.load(), s->skips.load(), in.respawns.load(), s->stats[0].lastUs.load(),
-            s->stats[0].maxUs.load(), s->stats[0].faulted.load(), s->stats[0].parked.load(), s->stats[0].parkedBlocks.load(), in.depth);
+            in.notesIn, std::exchange(in.peak, 0), s->phase.load(), s->child_pid.load(), s->underruns.load(), s->skips.load(),
+            in.respawns.load(), s->stats[0].lastUs.load(), s->stats[0].maxUs.load(), s->stats[0].faulted.load(),
+            s->stats[0].parked.load(), s->stats[0].parkedBlocks.load(), in.depth);
     }
-    for (int pg = 0; pg < 4; ++pg) {
-        const size_t n = std::strlen(kPageKeys[pg]);
-        if (std::strncmp(k, kPageKeys[pg], n) == 0 && k[n] >= '1' && k[n] <= '8' && k[n + 1] == 0)
-            return std::snprintf(buf, size_t(len), "%d", in.params.page[pg][k[n] - '1']);
-    }
-    return -1;
+    const auto* d = findDef(k);
+    if (!d) return -1;
+    const int* slot = rawSlot(in.params, *d);
+    return slot ? fromRaw(*d, *slot, buf, len) : -1;
 }
 
 int getError(void* ptr, char* buf, int len)
