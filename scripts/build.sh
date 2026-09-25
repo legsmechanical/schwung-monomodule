@@ -8,7 +8,7 @@ IMAGE_NAME="schwung-monomodule-builder"
 
 if [ -z "$CROSS_PREFIX" ] && [ ! -f "/.dockerenv" ]; then
     docker build -q -t "$IMAGE_NAME" -f "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR" >/dev/null
-    exec docker run --rm -v "$REPO_ROOT:/build" -u "$(id -u):$(id -g)" -e HOME=/tmp -e BUILD_DIR -e CMAKE_EXTRA -e DIST_DIR -w /build "$IMAGE_NAME" ./scripts/build.sh "$@"
+    exec docker run --rm -v "$REPO_ROOT:/build" -u "$(id -u):$(id -g)" -e HOME=/tmp -e BUILD_DIR -e CMAKE_EXTRA -e DIST_DIR -e VERSION -w /build "$IMAGE_NAME" ./scripts/build.sh "$@"
 fi
 
 cd "$REPO_ROOT"
@@ -23,9 +23,11 @@ if [ -f "$BUILD_DIR/mnm-engine" ] && [ -f "$BUILD_DIR/dsp.so" ] && [ -f "$BUILD_
     for m in monomodule-one monomodule-fx; do
         rm -rf "$DIST_DIR/$m" && mkdir -p "$DIST_DIR/$m/os"
         cp "modules/$m/module.json" "modules/$m/help.json" "$BUILD_DIR/mnm-engine" "$DIST_DIR/$m/"
+        # a versioned package: VERSION=0.1.0-beta.1 scripts/build.sh
+        if [ -n "$VERSION" ]; then sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" "$DIST_DIR/$m/module.json"; fi
         if [ "$m" = monomodule-one ]; then cp "$BUILD_DIR/dsp.so" "$DIST_DIR/$m/"; else cp "$BUILD_DIR/monomodule-fx.so" "$DIST_DIR/$m/"; fi
         "${CROSS_PREFIX}strip" "$DIST_DIR/$m/mnm-engine" "$DIST_DIR/$m/"*.so
-        tar -C "$DIST_DIR" -czf "$DIST_DIR/$m.tar.gz" "$m"
+        tar -C "$DIST_DIR" -czf "$DIST_DIR/$m${VERSION:+-$VERSION}.tar.gz" "$m"
     done
-    echo "packaged: $DIST_DIR/monomodule-one.tar.gz $DIST_DIR/monomodule-fx.tar.gz"
+    echo "packaged: $(ls "$DIST_DIR"/*.tar.gz | tr '\n' ' ')"
 fi

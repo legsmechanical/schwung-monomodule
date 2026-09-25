@@ -51,6 +51,7 @@
       {"key": "level", "name": "Track Level", "short_name": "LEVEL", "type": "int", "min": 0, "max": 127, "default": 100, "viz": {"kind": "fader"}},
       {"key": "depth", "name": "Latency (blocks ahead)", "short_name": "LTNCY", "type": "int", "min": 1, "max": 4, "default": 2},
       {"key": "load", "name": "Engine Load", "short_name": "LOAD", "type": "int", "min": 0, "max": 100, "unit": "%", "access": "read", "live": true},
+      {"key": "peak", "name": "Peak Load (this machine)", "short_name": "PEAK", "type": "int", "min": 0, "max": 200, "unit": "%", "access": "read", "live": true},
       {"key": "sin_tune", "name": "Tune", "short_name": "TUNE", "type": "int", "min": -64, "max": 63},
       {"key": "nois_st", "name": "Stereo", "short_name": "ST", "type": "int", "min": 0, "max": 127},
       {"key": "nois_red", "name": "Redness", "short_name": "RED", "type": "int", "min": 0, "max": 127},

@@ -48,6 +48,7 @@
       {"key": "level", "name": "Track Level", "short_name": "LEVEL", "type": "int", "min": 0, "max": 127, "default": 100, "viz": {"kind": "fader"}},
       {"key": "depth", "name": "Latency (blocks ahead)", "short_name": "LTNCY", "type": "int", "min": 1, "max": 4, "default": 2},
       {"key": "load", "name": "Engine Load", "short_name": "LOAD", "type": "int", "min": 0, "max": 100, "unit": "%", "access": "read", "live": true},
+      {"key": "peak", "name": "Peak Load (this machine)", "short_name": "PEAK", "type": "int", "min": 0, "max": 200, "unit": "%", "access": "read", "live": true},
       {"key": "thru_inp", "name": "Input Gain", "short_name": "INP", "type": "int", "min": 0, "max": 127},
       {"key": "rev_dec", "name": "Decay", "short_name": "DEC", "type": "int", "min": 0, "max": 127},
       {"key": "rev_damp", "name": "Damping", "short_name": "DAMP", "type": "int", "min": 0, "max": 127},

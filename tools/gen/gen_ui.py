@@ -157,6 +157,8 @@ def build(variant):
                   "max": 4, "default": 2})
     chain.append({"key": "load", "name": "Engine Load", "short_name": "LOAD", "type": "int", "min": 0, "max": 100,
                   "unit": "%", "access": "read", "live": True})
+    chain.append({"key": "peak", "name": "Peak Load (this machine)", "short_name": "PEAK", "type": "int", "min": 0,
+                  "max": 200, "unit": "%", "access": "read", "live": True})
 
     # one SYN level per machine, gated on the machine
     for m, label in zip(machines, labels):
@@ -217,10 +219,10 @@ def build(variant):
         levels[f"lfo{n}"] = {"name": f"LFO{n}", "params": params, "knobs": knobs}
         nav.append({"level": f"lfo{n}", "label": f"LFO{n}"})
 
-    root_params = [c for c in chain[:4]] + nav
+    root_params = [c for c in chain[:5]] + nav
     title = "Monomodule FX" if fx else "Monomodule One"
     levels = {"root": {"name": title, "list_param": "preset", "count_param": "preset_count", "name_param": "preset_name",
-                       "params": root_params, "knobs": ["machine", "level", "depth", "load"]}, **levels}
+                       "params": root_params, "knobs": ["machine", "level", "depth", "load", "peak"]}, **levels}
     keys = [c["key"] for c in chain]
     dupes = {k for k in keys if keys.count(k) > 1}
     assert not dupes, f"duplicate keys: {dupes}"   # a repeated key makes the host drop ALL metadata
@@ -241,7 +243,7 @@ def build(variant):
             clevels[name] = lv
     croot = dict(levels["root"])
     croot["params"] = [q for q in croot["params"] if not (isinstance(q, dict) and q.get("level", "").startswith("syn_"))]
-    croot["params"].insert(4, {"level": "syn", "label": "@M@"})
+    croot["params"].insert(5, {"level": "syn", "label": "@M@"})
     clevels["root"] = croot
     clevels = {"root": croot, "syn": "@SYNLEVEL@", **{k: v for k, v in clevels.items() if k != "root"}}
     compat["hierarchy"] = {"levels": clevels}

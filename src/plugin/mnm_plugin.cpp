@@ -856,6 +856,11 @@ int getParam(void* ptr, const char* key, char* buf, int len)
     if (std::strcmp(k, "preset_name") == 0) return presetName(in, in.presetIndex, buf, len);
     if (std::strcmp(k, "depth") == 0) return std::snprintf(buf, size_t(len), "%d", in.depth);
     if (std::strcmp(k, "load") == 0) return std::snprintf(buf, size_t(len), "%d", loadPercent(in));
+    if (std::strcmp(k, "peak") == 0) {   // the worst block since this machine was picked (the engine resets it)
+        auto* s = in.seg.load(std::memory_order_acquire);
+        const double pct = s ? 100.0 * s->stats[0].maxUs.load() / (1e6 * shm::kFrames / 44100.0) : 0.0;
+        return std::snprintf(buf, size_t(len), "%d", int(std::lround(std::min(pct, 200.0))));
+    }
     if (std::strcmp(k, "status") == 0) {   // diagnostics
         auto* s = in.seg.load();
         if (!s) return std::snprintf(buf, size_t(len), "{\"phase\":\"none\",\"error\":\"%s\"}", in.error);

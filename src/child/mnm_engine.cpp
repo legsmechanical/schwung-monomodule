@@ -234,6 +234,7 @@ int main(int argc, char** argv)
             const auto& c = s.cmds[r & (shm::kCmdSlots - 1)];
             if (c.engine < n) {
                 applyCmd(engines[c.engine], c); engines[c.engine].woken = true;
+                if (shm::Op(c.op) == shm::Op::SetMachine) s.stats[c.engine].maxUs.store(0, std::memory_order_relaxed);   // PEAK is per machine
                 if (c.op < 16) ++g_opCounts[c.op];
             }
         }
