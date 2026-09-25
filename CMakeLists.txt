@@ -15,13 +15,14 @@ include(cmake/dsp56300.cmake)
 set(MNM_CORE "${MNM_ROOT}/src/core")
 add_library(mnmcore STATIC
   ${MNM_CORE}/firmware/Firmware.cpp
-  ${MNM_CORE}/dsp/DspEngine.cpp
   ${MNM_CORE}/dsp/Digibank.cpp
   ${MNM_CORE}/host/HostModel.cpp
   ${MNM_CORE}/host/Lfo.cpp
-  ${MNM_CORE}/MonoVoice.cpp
+  src/engine/dsp/DspEngine.cpp
+  src/engine/MonoVoice.cpp
 )
-target_include_directories(mnmcore PUBLIC ${MNM_CORE})
+# Our engine glue (src/engine) shadows upstream's DspEngine and MonoVoice; the rest of the core is upstream's.
+target_include_directories(mnmcore PUBLIC src/engine ${MNM_CORE})
 target_link_libraries(mnmcore PUBLIC dsp56kEmu)
 target_compile_definitions(mnmcore PUBLIC MNM_OS_SYX="")
 
