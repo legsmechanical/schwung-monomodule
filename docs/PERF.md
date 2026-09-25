@@ -98,6 +98,19 @@ Move: a silent Monomodule One and the FX behind it cost 0.0% CPU (engine process
 2 s park never engages for a lone slot. It matters where the host cannot help: several engines in
 one instance (one sounding, others idle — the DR32-style plan) and an FX whose slot keeps running.
 
+## Commit charge and address space (2026-09-25, a stock CM4 tester: 1.9 GB RAM, no swap -> bad_alloc)
+
+| per engine | before | after (patch 0002) |
+|---|---|---|
+| Committed_AS | ~852 MB | 63 MB |
+| VmSize | 1.83 GB | 1.24 GB |
+| PSS (real use) | ~57 MB | ~57 MB |
+
+dsp56300 reserved its address ranges as WRITABLE SHARED ANONYMOUS memory (charged in full to the commit
+total) and the DSP range 4x too large (768 MB for the 192 MB mapped). Now PROT_NONE + MAP_NORESERVE,
+right-sized. Bit-exact on Mac and Move. The remaining ~1.2 GB of addresses: the JIT's per-mode tables
+(~28 modes x 36 MB), almost all mapped to one shared default page.
+
 ## Bit-exactness gate
 
 `mnm-golden <os.syx>` renders a fixed script on all 22 machines (notes, parameter sweeps on every

@@ -81,3 +81,30 @@
  
  	protected:
  		void readRXimpl(RxFrame& _values);
+--- a/source/dsp56kBase/mmuhelper.cpp
++++ b/source/dsp56kBase/mmuhelper.cpp
+@@ -207,7 +207,10 @@
+ 
+ 	uint8_t* MmuHelper::reserveAddressRange(const size_t _byteSize)
+ 	{
+-		auto* ptr = mmap(nullptr, _byteSize, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, InvalidHandle, 0);
++		// Schwung: reserve ADDRESSES only. Every byte in use is mapped over this with MAP_FIXED from the backing
++		// store (mapRegion); a writable shared anonymous reservation was charged in full to the commit total
++		// (~850 MB per DSP), enough to exhaust a Move's commit headroom and fail later allocations.
++		auto* ptr = mmap(nullptr, _byteSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, InvalidHandle, 0);
+ 		if (ptr == MAP_FAILED)
+ 		{
+ 			LOG("MmuHelper: mmap failed to reserve address range");
+--- a/source/dsp56kEmu/memorybuffer.cpp
++++ b/source/dsp56kEmu/memorybuffer.cpp
+@@ -75,7 +75,9 @@
+ 		// we add a block above the external memory that every invalid DSP address will point into
+ 		constexpr auto totalAddressRange = 3 * totalDspAreaByteSize;
+ 
+-		auto* basePtr = reinterpret_cast<TWord*>(m_mmu.reserveAddressRange(totalAddressRange * sizeof(TWord)));
++		// Schwung: totalAddressRange is already in BYTES (3 x totalDspAreaByteSize); multiplying by sizeof(TWord)
++		// again reserved 768 MB of addresses for the 192 MB that is mapped.
++		auto* basePtr = reinterpret_cast<TWord*>(m_mmu.reserveAddressRange(totalAddressRange));
+ 
+ 		if(!basePtr)
+ 			return;
