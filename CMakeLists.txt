@@ -27,3 +27,6 @@ target_compile_definitions(mnmcore PUBLIC MNM_OS_SYX="")
 
 add_executable(mnm-bench tools/bench/mnm_bench.cpp)
 target_link_libraries(mnm-bench PRIVATE mnmcore)
+
+add_executable(mnm-golden tools/bench/mnm_golden.cpp)
+target_link_libraries(mnm-golden PRIVATE mnmcore)
