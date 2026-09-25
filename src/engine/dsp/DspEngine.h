@@ -49,6 +49,7 @@ public:
     void setUseJit(bool b) { m_useJit = b; }
     bool usingJit() const { return m_useJit; }
     bool faulted() const { return m_faulted; }
+    int idleLoopsSkipped() const { return m_idleLoopsSkipped; }
     const std::string& faultReason() const { return m_fault; }
     const RenderStats& stats() const { return m_stats; }
 
@@ -64,6 +65,7 @@ public:
 private:
     void loadImage(const fw::DspImage& img);
     void installStub();
+    void skipIdleLoops();
     void uploadDigibank();
     bool runUntilTx(size_t words, uint64_t maxInstr);
     void fault(const std::string& why);
@@ -77,6 +79,7 @@ private:
     std::shared_ptr<const Digibank> m_bank;
     bool m_useJit = true;
     bool m_trace = false;
+    int m_idleLoopsSkipped = 0;
     bool m_faulted = false;
     std::string m_fault;
     RenderStats m_stats;

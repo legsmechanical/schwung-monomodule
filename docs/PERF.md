@@ -26,6 +26,10 @@ a per-block `getenv` ~0.5%.
 | lean harness: block written straight to DSP memory, one HI08 word each way | 8.3% (core 3) / 8.0% (core 2) | yes |
 | `-mcpu=cortex-a72` + LTO | 7.8% | yes |
 | `aguSupportMultipleWrapModulo=false` (Mac) | no change — dropped | yes |
+| skip the kernel's NOP padding loops (4 sites; GND 8755→5468, GND SIN 9877→4766, THRU 8865→5578 instr/16f) | 7.3% (heaviest: SID / DDRW / DENS 9.3%) | yes |
+
+The padding loops were found with a per-PC instruction histogram and `mnm-disasm <os> --idle-loops`,
+which lists every DO whose body is only NOPs; each was checked by hand to be code, not data.
 
 After the lean harness the Mac profile is ~87% JIT-generated code. The DSP hands control back to
 the run loop ~190 times per 16 frames (~43 instructions per `exec()`), so the remaining non-JIT

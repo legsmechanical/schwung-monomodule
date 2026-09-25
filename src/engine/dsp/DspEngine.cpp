@@ -114,9 +114,33 @@ void DspEngine::installStub()
     emit(pc, "move #>$ffffff,m0");
     emit(pc, "movep #>$00d0e0,x:<<$ffffc7");
     emit(pc, "jmp $0c20");
+    skipIdleLoops();
     // ---- patch: $0143 (start of the mixing step) → stub_out. 1-word short jmp; the 2nd word of the
     // overwritten 'move y:>$123,r6' is never reached.
     m_dsp->memWriteP(kPatchAddr, 0x0C0000 | kStubOut);
+}
+
+// Schwung: the kernel burns padding on the real chip — DO loops whose body is nothing but NOPs (listed by
+// `mnm-disasm <os> --idle-loops`, each checked by hand to be code). They have no effect but time, which the
+// emulation does not need: each DO (2 words) becomes 'jmp >end' (2 words). A NOP-only DO body changes no
+// register or memory and the DO restores LA/LC/SR when it ends, so the audio is bit-exact. GND and REVERB
+// spend ~37% of their instructions here, GND SIN ~50%. Only patched if the words match OS 1.32B.
+void DspEngine::skipIdleLoops()
+{
+    struct Site { TWord pc, doWord, laWord, end; };
+    static constexpr Site kSites[] = {
+        {0x100162, 0x06808C, 0x100164, 0x100165},   // do #$c80 { nop }            (GND ---)
+        {0x144D0E, 0x061080, 0x144D1F, 0x144D20},   // do #$10 { do #$18 { 13×nop } nop }  (GND SIN)
+        {0x144E72, 0x067880, 0x144E74, 0x144E75},   // do #$78 { nop }
+        {0x14765C, 0x064086, 0x14765F, 0x147660},   // do #$640 { nop nop }        (REVERB)
+    };
+    m_idleLoopsSkipped = 0;
+    for (const auto& s : kSites) {
+        if (m_mem->get(MemArea_P, s.pc) != s.doWord || m_mem->get(MemArea_P, s.pc + 1) != s.laWord) continue;
+        m_dsp->memWriteP(s.pc, 0x0AF080);   // jmp >end
+        m_dsp->memWriteP(s.pc + 1, s.end);
+        ++m_idleLoopsSkipped;
+    }
 }
 
 void DspEngine::reset(bool clearMemory)

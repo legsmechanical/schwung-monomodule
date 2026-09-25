@@ -33,3 +33,6 @@ target_link_libraries(mnm-bench PRIVATE mnmcore)
 
 add_executable(mnm-golden tools/bench/mnm_golden.cpp)
 target_link_libraries(mnm-golden PRIVATE mnmcore)
+
+add_executable(mnm-disasm tools/disasm/mnm_disasm.cpp)
+target_link_libraries(mnm-disasm PRIVATE mnmcore)
