@@ -94,6 +94,101 @@ int main(int argc, char** argv)
     }
     std::printf("boot to ready: %.0f ms\n", std::chrono::duration<double, std::milli>(Clock::now() - t0).count());
 
+    if (mode == "presets") {   // <dir>/dumps holds test_kits.syx (tools/gen/mkdump.cpp)
+        int fails = 0;
+        auto expect = [&](const char* k, const char* want) {
+            const std::string got = get(k);
+            const bool ok = got == want;
+            if (!ok) ++fails;
+            std::printf("  %-14s = %-16s %s\n", k, got.c_str(), ok ? "ok" : (std::string("WANT ") + want).c_str());
+        };
+        run(4, "waiting for the dump scan");
+        std::printf("  preset_count = %s\n", get("preset_count").c_str());
+        const int count = std::atoi(get("preset_count").c_str());
+        for (int i = 0; i < count; ++i) { set("preset", std::to_string(i).c_str()); std::printf("   [%d] %s\n", i, get("preset_name").c_str()); }
+        if (!fx) {
+            if (count != 17) { ++fails; std::printf("  WANT 17 presets\n"); }
+            set("preset", "15"); expect("preset_name", "TESTKIT 1"); expect("machine", "SID 6581");
+            expect("sid_wave", "SAW"); expect("sid_tune", "5"); expect("level", "110");
+            set("preset", "0"); expect("preset_name", "Init GND"); expect("machine", "GND");
+            set("preset", "12"); expect("machine", "FM+ PAR"); expect("fmp_1frq", "1/2");
+            midi(0x90, 48, 100); run(1, "Init FM+ PAR plays"); midi(0x80, 48, 0);
+        } else {
+            if (count != 8) { ++fails; std::printf("  WANT 8 presets\n"); }
+            set("preset", "7"); expect("preset_name", "TESTKIT 3"); expect("machine", "REVERB"); expect("rev_dec", "100");
+            static char big[262144];
+            const int h = afx->get_param(inst, "ui_hierarchy", big, sizeof big);
+            const bool ok = h > 1000 && std::strstr(big, "\"DAMP\"") && !std::strstr(big, "@S");
+            if (!ok) ++fails;
+            std::printf("  FX serves its hierarchy (%d bytes) with REVERB's labels in LFO DEST: %s\n", h, ok ? "ok" : "BAD");
+            set("lfo2_page", "SYNT"); set("lfo2_dest_synt", "GATE"); expect("lfo2_dest_synt", "GATE");
+            run(1, "REVERB preset on a sine");
+        }
+        std::printf("%s\n", fails ? "PRESETS FAIL" : "PRESETS PASS");
+        fx ? afx->destroy_instance(inst) : syn->destroy_instance(inst);
+        return fails ? 1 : 0;
+    }
+    if (mode == "ui") {   // the generated parameter surface
+        int fails = 0;
+        auto expect = [&](const char* k, const char* want) {
+            const std::string got = get(k);
+            const bool ok = got == want;
+            if (!ok) ++fails;
+            std::printf("  %-18s = %-8s %s\n", k, got.c_str(), ok ? "ok" : (std::string("WANT ") + want).c_str());
+        };
+        {
+            static char big[131072];
+            const int n = fx ? afx->get_param(inst, "ui_hierarchy", big, sizeof big) : syn->get_param(inst, "ui_hierarchy", big, sizeof big);
+            const bool ok = n > 1000 && std::strstr(big, "\"levels\"") != nullptr;
+            if (!ok) ++fails;
+            std::printf("  ui_hierarchy: %d bytes %s\n", n, ok ? "ok" : "BAD");
+        }
+        set("machine", "SID 6581"); expect("machine", "SID 6581");
+        expect("sid_wave", "TRI");
+        set("sid_wave", "PULS"); expect("sid_wave", "PULS");
+        set("sid_wave", "1"); expect("sid_wave", "SAW");          // by index
+        set("sid_tune", "-12"); expect("sid_tune", "-12");        // bipolar
+        set("amp_pan", "-64"); expect("amp_pan", "-64");
+        set("amp_pan", "99"); expect("amp_pan", "63");            // clamped
+        set("machine", "FM+ PAR"); expect("machine", "FM+ PAR");
+        expect("fmp_1frq", "1/2");                                  // FM+ PAR default ratio (raw 60)
+        expect("sid_wave", "SAW");                                  // remembered while another machine plays
+        set("machine", "SID 6581"); expect("sid_wave", "SAW"); expect("sid_tune", "-12");
+        set("machine", "12");                                       // by index: 13th synth machine
+        std::printf("  machine by index 12 -> %s\n", get("machine").c_str());
+        expect("lfo1_page", "PTCH"); expect("lfo1_dest_ptch", "2OCT");
+        set("lfo1_page", "AMP"); expect("lfo1_dest_amp", "DIST");   // same raw slot (64 = 5th name), AMP page names
+        set("lfo1_dest_amp", "PAN"); expect("lfo1_dest_amp", "PAN"); expect("lfo1_dest_ptch", "8OCT");
+        set("fmd_1frq", ".999"); set("fmd_1frq", "1.5"); expect("fmd_1frq", "1.5");   // readout
+        set("machine", "DPRO DDRW"); set("ddrw_wav1", "SIN"); expect("ddrw_wav1", "SIN");   // Digibank slot 33 by name
+        set("ddrw_wav1", "32"); expect("ddrw_wav1", "SIN"); set("ddrw_wav2", "D05"); expect("ddrw_wav2", "D05");
+        // LFO DEST on the SYNT page follows the machine
+        set("machine", "SID 6581"); expect("is_loading", "1");
+        set("lfo1_page", "SYNT"); expect("lfo1_dest_synt", "MFRQ");      // DEST still on slot 7 (PAN earlier): SID calls it MFRQ
+        set("lfo1_dest_synt", "PWAD"); expect("lfo1_dest_synt", "PWAD");
+        set("lfo1_dest_synt", "PAR1"); expect("lfo1_dest_synt", "PW");    // the generic name still selects
+        set("machine", "DPRO WAVE"); expect("lfo1_dest_synt", "WAVE"); set("lfo1_dest_synt", "6"); expect("lfo1_dest_synt", "PAR7");  // blank slot
+        {
+            static char big[262144];
+            const int h = syn ? syn->get_param(inst, "ui_hierarchy", big, sizeof big) : afx->get_param(inst, "ui_hierarchy", big, sizeof big);
+            const bool ok = h > 0 && std::strstr(big, "\"WPRS\"") && !std::strstr(big, "@S");
+            if (!ok) ++fails;
+            std::printf("  ui_hierarchy carries DPRO WAVE's labels, no placeholders: %s\n", ok ? "ok" : "BAD");
+            const int c = syn ? syn->get_param(inst, "chain_params", big, sizeof big) : afx->get_param(inst, "chain_params", big, sizeof big);
+            const bool ok2 = c > 0 && std::strstr(big, "\"SFRQ\"") && !std::strstr(big, "@S") && big[0] == '[';
+            if (!ok2) ++fails;
+            std::printf("  chain_params (%d bytes) carries them too: %s\n", c, ok2 ? "ok" : "BAD");
+        }
+        run(0.45, "");
+        expect("is_loading", "0");
+        std::printf("  load = %s\n", get("load").c_str());
+        const std::string st = get("state");
+        std::printf("state: %s\n", st.c_str());
+        set("amp_pan", "0"); set("state", st.c_str()); expect("amp_pan", "63");
+        std::printf("%s\n", fails ? "UI FAIL" : "UI PASS");
+        fx ? afx->destroy_instance(inst) : syn->destroy_instance(inst);
+        return fails ? 1 : 0;
+    }
     if (mode == "park") {   // sleep after silence, wake on a note
         auto field = [&](const char* k) { const auto st = get("status"); const auto p = st.find(std::string("\"") + k + "\":"); return p == std::string::npos ? -1 : std::atoi(st.c_str() + p + std::strlen(k) + 3); };
         if (!fx) { midi(0x90, 48, 100); run(0.5, "note"); midi(0x80, 48, 0); }
