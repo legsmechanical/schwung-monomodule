@@ -35,7 +35,9 @@ TESTD = "/data/UserData/schwung/bin/schwung-testd"
 LIVE = "/dev/shm/schwung-display-live"
 CONTROL = "/dev/shm/schwung-control"
 MIRROR_OFFSET = 33   # shadow_control_t.display_mirror (schwung src/host/shadow_constants.h), checked by offsetof
-CONTROL_SOCKET = f"/tmp/move-devicetest-{os.getuid()}.sock"
+CONTROL_SOCKET = f"/tmp/move-devicetest-{os.getuid()}.sock"   # on the Mac
+SCRATCH = "/data/UserData/mnm-scratch"   # on the Move: never /tmp (a stock Move's root FS is ~463 MB and full)
+DAVEBOX_LOCK = "/dev/shm/.dbxhost-session.lock"
 
 _client_src = Path(os.environ.get("SCHWUNG_CURRENT", Path(__file__).resolve().parents[3] / "schwung-current")) / "tools/pytest-schwung/src"
 sys.path.insert(0, str(_client_src))
@@ -103,14 +105,23 @@ class Screen:
         return Frame(d)
 
 
+def davebox_session_live() -> bool:
+    """dAVEBOx SA owns the whole surface while its session runs; the lock holds its PID."""
+    out = ssh(f"p=$(cat {DAVEBOX_LOCK} 2>/dev/null); [ -n \"$p\" ] && kill -0 $p 2>/dev/null && echo live", check=False)
+    return b"live" in out
+
+
 class Device:
-    """Screen + upstream's test bus. Starts schwung-testd if it is not running and forwards its port."""
+    """Screen + upstream's test bus. Starts schwung-testd if it is not running and forwards its port.
+    Refuses to start while a dAVEBOx session is live on the same Move (another session's work)."""
 
     def __enter__(self):
+        if davebox_session_live() and not os.environ.get("MNM_IGNORE_DAVEBOX"):
+            raise SystemExit("a dAVEBOx session is live on this Move: ask Josh before driving it")
         from schwung_bus.client import SchwungBus   # upstream's client
         self.screen = Screen().__enter__()
         if not ssh("pgrep -x schwung-testd", check=False).strip():
-            ssh(f"nohup setsid {TESTD} > /tmp/schwung-testd.log 2>&1 < /dev/null &")
+            ssh(f"mkdir -p {SCRATCH}; nohup setsid {TESTD} > {SCRATCH}/schwung-testd.log 2>&1 < /dev/null &")
             time.sleep(0.5)
         subprocess.run(["ssh", "-o", f"ControlPath={CONTROL_SOCKET}", "-O", "forward", "-L",
                         f"{PORT}:127.0.0.1:{PORT}", f"{USER}@{HOST}"], capture_output=True)

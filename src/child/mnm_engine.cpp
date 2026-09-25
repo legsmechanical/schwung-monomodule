@@ -36,6 +36,7 @@ using Clock = std::chrono::steady_clock;
 namespace {
 
 FILE* g_log = nullptr;
+uint32_t g_opCounts[16] = {};   // commands received, by op (diagnostics, logged every 5 s)
 
 void logf(const char* fmt, ...)
 {
@@ -219,7 +220,10 @@ int main(int argc, char** argv)
         const uint32_t w = s.cmd_write.load(std::memory_order_acquire);
         for (; r != w; ++r) {
             const auto& c = s.cmds[r & (shm::kCmdSlots - 1)];
-            if (c.engine < n) { applyCmd(engines[c.engine], c); engines[c.engine].woken = true; }
+            if (c.engine < n) {
+                applyCmd(engines[c.engine], c); engines[c.engine].woken = true;
+                if (c.op < 16) ++g_opCounts[c.op];
+            }
         }
         s.cmd_read.store(r, std::memory_order_release);
 
@@ -272,6 +276,15 @@ int main(int argc, char** argv)
         }
         ++next;
         s.produced.store(next, std::memory_order_release);
+        if (std::getenv("MNM_DIAG") || true) {
+            static uint32_t diagBlocks = 0;
+            if (++diagBlocks % 1723 == 0) {   // ~5 s
+                const auto& e0 = engines[0];
+                logf("diag: parked %d silentBlocks %u held %d | cmds noteon %u noteoff %u allnotesoff %u machine %u param %u lfo %u level %u bpm %u routing %u reset %u",
+                     int(e0.parked), e0.silentBlocks, e0.held, g_opCounts[1], g_opCounts[2], g_opCounts[3], g_opCounts[4], g_opCounts[5],
+                     g_opCounts[6], g_opCounts[7], g_opCounts[8], g_opCounts[9], g_opCounts[10]);
+            }
+        }
     }
     logf("shutdown");
     return 0;

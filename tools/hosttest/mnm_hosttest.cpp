@@ -150,5 +150,11 @@ int main(int argc, char** argv)
     std::this_thread::sleep_for(std::chrono::milliseconds(600));
     std::printf("engine pid %d after destroy: %s\n", pid, pid > 0 && kill(pid, 0) == 0 ? "STILL RUNNING" : "gone");
     dlclose(so);
+    {   // the plugin pins itself (RTLD_NODELETE) so its supervisor thread can outlive dlclose
+        FILE* f = std::fopen("/proc/self/maps", "r"); char line[512]; bool mapped = false;
+        while (f && std::fgets(line, sizeof line, f)) if (std::strstr(line, fx ? "monomodule-fx.so" : "dsp.so")) mapped = true;
+        if (f) std::fclose(f);
+        std::printf("after dlclose the plugin is %s\n", mapped ? "still mapped (pinned)" : "UNMAPPED (pin failed)");
+    }
     return 0;
 }

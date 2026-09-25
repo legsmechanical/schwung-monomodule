@@ -61,6 +61,13 @@ def main():
             if s["underruns"] - u0: fails.append(f"depth {depth} underruns")
         b.set_param("synth:depth", "2", overtake=False)
 
+        print("\n-- idle sleep: 5 s of silence, then a note")
+        time.sleep(5); s = status(b)
+        asleep = s.get("parked") == 1
+        note(b, 48, True); time.sleep(0.5); s2 = status(b); note(b, 48, False)
+        print(f"  asleep after silence: {asleep}  (blocks skipped {s.get('parked_blocks')});  after a note: parked {s2.get('parked')} peak {s2['peak']}")
+        if not asleep or s2.get("parked") != 0 or s2["peak"] == 0: fails.append("idle sleep")
+
         print("\n-- kill the engine inside Move")
         state = b.get_param("synth:state", overtake=False)
         pid = status(b)["pid"]; ssh(f"kill -9 {pid}")
