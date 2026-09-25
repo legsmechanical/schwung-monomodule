@@ -18,6 +18,19 @@ Mac profile (SID): ~78% in JIT-generated code; the rest is harness and periphera
 host-port ring buffers ~7.5%, the run loop ~3.5%, peripheral ticking ~3%, JIT mode checks ~2.5%,
 a per-block `getenv` ~0.5%.
 
+## Optimisation log (CM5, Move running, bench pinned to core 2, 3-run averages)
+
+| change | mean load | bit-exact |
+|---|---|---|
+| baseline (core 3 run) | 9.2% | — |
+| lean harness: block written straight to DSP memory, one HI08 word each way | 8.3% (core 3) / 8.0% (core 2) | yes |
+| `-mcpu=cortex-a72` + LTO | 7.8% | yes |
+| `aguSupportMultipleWrapModulo=false` (Mac) | no change — dropped | yes |
+
+After the lean harness the Mac profile is ~87% JIT-generated code. The DSP hands control back to
+the run loop ~190 times per 16 frames (~43 instructions per `exec()`), so the remaining non-JIT
+cost is that loop plus peripheral ticking (~2%).
+
 ## Bit-exactness gate
 
 `mnm-golden <os.syx>` renders a fixed script on all 22 machines (notes, parameter sweeps on every

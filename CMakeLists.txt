@@ -7,6 +7,8 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
+# Link-time optimisation: bit-exact, ~3% faster on the Move (docs/PERF.md).
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
 
 # Upstream Monomodule (GPLv3): the emulator core only. Its JUCE plugins, Library app and tests are not built.
 set(MNM_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/libs/monomodule")

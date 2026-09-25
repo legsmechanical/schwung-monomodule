@@ -12,5 +12,5 @@ set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 
 # Optimize for Move's CM4 (Cortex-A72 / ARMv8.0)
-set(CMAKE_C_FLAGS_INIT "-march=armv8-a -mtune=cortex-a72")
-set(CMAKE_CXX_FLAGS_INIT "-march=armv8-a -mtune=cortex-a72")
+set(CMAKE_C_FLAGS_INIT "-mcpu=cortex-a72")
+set(CMAKE_CXX_FLAGS_INIT "-mcpu=cortex-a72")

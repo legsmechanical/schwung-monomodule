@@ -8,9 +8,10 @@ IMAGE_NAME="schwung-monomodule-builder"
 
 if [ -z "$CROSS_PREFIX" ] && [ ! -f "/.dockerenv" ]; then
     docker build -q -t "$IMAGE_NAME" -f "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR" >/dev/null
-    exec docker run --rm -v "$REPO_ROOT:/build" -u "$(id -u):$(id -g)" -e HOME=/tmp -w /build "$IMAGE_NAME" ./scripts/build.sh "$@"
+    exec docker run --rm -v "$REPO_ROOT:/build" -u "$(id -u):$(id -g)" -e HOME=/tmp -e BUILD_DIR -e CMAKE_EXTRA -w /build "$IMAGE_NAME" ./scripts/build.sh "$@"
 fi
 
 cd "$REPO_ROOT"
-cmake -B build-arm -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/aarch64-toolchain.cmake -DCMAKE_BUILD_TYPE=Release >/dev/null
-cmake --build build-arm -j"$(nproc)" ${1:+--target "$@"}
+BUILD_DIR="${BUILD_DIR:-build-arm}"
+cmake -B "$BUILD_DIR" -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/aarch64-toolchain.cmake -DCMAKE_BUILD_TYPE=Release $CMAKE_EXTRA >/dev/null
+cmake --build "$BUILD_DIR" -j"$(nproc)" ${1:+--target "$@"}
