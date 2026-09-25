@@ -22,7 +22,7 @@ DIST_DIR="${DIST_DIR:-dist}"
 if [ -f "$BUILD_DIR/mnm-engine" ] && [ -f "$BUILD_DIR/dsp.so" ] && [ -f "$BUILD_DIR/monomodule-fx.so" ]; then
     for m in monomodule-one monomodule-fx; do
         rm -rf "$DIST_DIR/$m" && mkdir -p "$DIST_DIR/$m/os"
-        cp "modules/$m/module.json" "$BUILD_DIR/mnm-engine" "$DIST_DIR/$m/"
+        cp "modules/$m/module.json" "modules/$m/help.json" "$BUILD_DIR/mnm-engine" "$DIST_DIR/$m/"
         if [ "$m" = monomodule-one ]; then cp "$BUILD_DIR/dsp.so" "$DIST_DIR/$m/"; else cp "$BUILD_DIR/monomodule-fx.so" "$DIST_DIR/$m/"; fi
         "${CROSS_PREFIX}strip" "$DIST_DIR/$m/mnm-engine" "$DIST_DIR/$m/"*.so
         tar -C "$DIST_DIR" -czf "$DIST_DIR/$m.tar.gz" "$m"
