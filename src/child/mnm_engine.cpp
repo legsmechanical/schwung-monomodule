@@ -36,7 +36,8 @@ using Clock = std::chrono::steady_clock;
 namespace {
 
 FILE* g_log = nullptr;
-uint32_t g_opCounts[16] = {};   // commands received, by op (diagnostics, logged every 5 s)
+uint32_t g_opCounts[16] = {};   // commands received, by op (MNM_DIAG: logged every ~5 s of rendered blocks)
+const bool g_diag = std::getenv("MNM_DIAG") != nullptr;
 
 void logf(const char* fmt, ...)
 {
@@ -276,7 +277,7 @@ int main(int argc, char** argv)
         }
         ++next;
         s.produced.store(next, std::memory_order_release);
-        if (std::getenv("MNM_DIAG") || true) {
+        if (g_diag) {   // MNM_DIAG=1 in the plugin's environment
             static uint32_t diagBlocks = 0;
             if (++diagBlocks % 1723 == 0) {   // ~5 s
                 const auto& e0 = engines[0];

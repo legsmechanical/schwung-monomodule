@@ -3,3 +3,4 @@ dist/
 *.syx
 roms/
 os/
+__pycache__/

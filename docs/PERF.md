@@ -90,6 +90,14 @@ is exactly zero at 16 bits (`mnm-bench --silence`).
 Measured inside the plugin path on the CM5 (`mnm-hosttest one park`): engine process 0.4% of a
 core asleep vs 15.2% playing (FM+ PAR, real clock under ondemand).
 
+### Inside Move, the host idles silent slots first
+
+Schwung pauses a synth slot after ~1 s of 16-bit silence (`DSP_IDLE_THRESHOLD`, then one probe render
+per ~0.5 s), and the whole slot — FX included — once synth and FX are both silent. Measured in
+Move: a silent Monomodule One and the FX behind it cost 0.0% CPU (engine process /proc stat), so our
+2 s park never engages for a lone slot. It matters where the host cannot help: several engines in
+one instance (one sounding, others idle — the DR32-style plan) and an FX whose slot keeps running.
+
 ## Bit-exactness gate
 
 `mnm-golden <os.syx>` renders a fixed script on all 22 machines (notes, parameter sweeps on every

@@ -25,6 +25,16 @@ def wait_ready(b, prefix, timeout=20):
         time.sleep(0.2)
     raise SystemExit(f"{prefix} not ready after {timeout} s")
 
+def engine_cpu(pid, seconds):
+    """% of one core the engine process used over `seconds` (utime+stime from /proc/<pid>/stat)."""
+    def ticks():
+        f = ssh(f"cat /proc/{pid}/stat").decode()
+        fields = f[f.rindex(")") + 2:].split()
+        return int(fields[11]) + int(fields[12])
+    hz = int(ssh("getconf CLK_TCK").decode().strip())
+    t0 = ticks(); time.sleep(seconds); t1 = ticks()
+    return 100.0 * (t1 - t0) / hz / seconds
+
 def main():
     fails = []
     with Device() as d:
@@ -61,12 +71,12 @@ def main():
             if s["underruns"] - u0: fails.append(f"depth {depth} underruns")
         b.set_param("synth:depth", "2", overtake=False)
 
-        print("\n-- idle sleep: 5 s of silence, then a note")
-        time.sleep(5); s = status(b)
-        asleep = s.get("parked") == 1
+        print("\n-- idle: 5 s of silence (the host pauses a silent synth slot itself), then a note")
+        time.sleep(5)
+        cpu = engine_cpu(status(b)["pid"], 3.0)
         note(b, 48, True); time.sleep(0.5); s2 = status(b); note(b, 48, False)
-        print(f"  asleep after silence: {asleep}  (blocks skipped {s.get('parked_blocks')});  after a note: parked {s2.get('parked')} peak {s2['peak']}")
-        if not asleep or s2.get("parked") != 0 or s2["peak"] == 0: fails.append("idle sleep")
+        print(f"  engine CPU while silent: {cpu:.1f}% of a core;  after a note: peak {s2['peak']}")
+        if cpu > 2.0 or s2["peak"] == 0: fails.append("idle")
 
         print("\n-- kill the engine inside Move")
         state = b.get_param("synth:state", overtake=False)
@@ -89,6 +99,16 @@ def main():
             if not ok: fails.append("fx " + m)
             print(f"  {m:9s} peak {s['peak']:5d}  underruns {s['underruns']}  last {s['last_us']:4d} us  max {s['max_us']:4d} us  {'ok' if ok else 'FAIL'}")
         print(f"  engines running: {ssh('pgrep -c mnm-engine', check=False).decode().strip()}")
+        # Silent: either the host pauses the whole slot (synth and FX both silent) or our own sleep
+        # skips the DSP. Either way the engine must cost ~nothing, and wake on the next note.
+        time.sleep(4.5)
+        fs = status(b, "fx1")
+        cpu = engine_cpu(fs["pid"], 3.0)
+        print(f"  FX engine CPU after 4.5 s of silence: {cpu:.1f}%  (own sleep: {fs.get('parked') == 1}, blocks skipped {fs.get('parked_blocks')})")
+        if cpu > 2.0: fails.append("fx idle")
+        note(b, 45, True); time.sleep(0.6); fs = status(b, "fx1"); note(b, 45, False)
+        print(f"  FX after a note: peak {fs['peak']}")
+        if fs["peak"] == 0: fails.append("fx wake")
 
         print("\n-- restore the slot")
         b.set_param("fx1:module", prev_fx, overtake=False)
