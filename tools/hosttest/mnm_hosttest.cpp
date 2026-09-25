@@ -94,6 +94,34 @@ int main(int argc, char** argv)
     }
     std::printf("boot to ready: %.0f ms\n", std::chrono::duration<double, std::milli>(Clock::now() - t0).count());
 
+    if (mode == "presets") {   // <dir>/dumps holds test_kits.syx (tools/gen/mkdump.cpp)
+        int fails = 0;
+        auto expect = [&](const char* k, const char* want) {
+            const std::string got = get(k);
+            const bool ok = got == want;
+            if (!ok) ++fails;
+            std::printf("  %-14s = %-16s %s\n", k, got.c_str(), ok ? "ok" : (std::string("WANT ") + want).c_str());
+        };
+        run(4, "waiting for the dump scan");
+        std::printf("  preset_count = %s\n", get("preset_count").c_str());
+        const int count = std::atoi(get("preset_count").c_str());
+        for (int i = 0; i < count; ++i) { set("preset", std::to_string(i).c_str()); std::printf("   [%d] %s\n", i, get("preset_name").c_str()); }
+        if (!fx) {
+            if (count != 17) { ++fails; std::printf("  WANT 17 presets\n"); }
+            set("preset", "15"); expect("preset_name", "TESTKIT 1"); expect("machine", "SID 6581");
+            expect("sid_wave", "SAW"); expect("sid_tune", "5"); expect("level", "110");
+            set("preset", "0"); expect("preset_name", "Init GND"); expect("machine", "GND");
+            set("preset", "12"); expect("machine", "FM+ PAR"); expect("fmp_1frq", "1/2");
+            midi(0x90, 48, 100); run(1, "Init FM+ PAR plays"); midi(0x80, 48, 0);
+        } else {
+            if (count != 8) { ++fails; std::printf("  WANT 8 presets\n"); }
+            set("preset", "7"); expect("preset_name", "TESTKIT 3"); expect("machine", "REVERB"); expect("rev_dec", "100");
+            run(1, "REVERB preset on a sine");
+        }
+        std::printf("%s\n", fails ? "PRESETS FAIL" : "PRESETS PASS");
+        fx ? afx->destroy_instance(inst) : syn->destroy_instance(inst);
+        return fails ? 1 : 0;
+    }
     if (mode == "ui") {   // the generated parameter surface
         int fails = 0;
         auto expect = [&](const char* k, const char* want) {

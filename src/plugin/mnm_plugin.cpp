@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <climits>
+#include <strings.h>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -35,6 +37,12 @@
 #include "host_api/audio_fx_api_v2.h"
 #include "host/Machines.h"
 #include "generated/mnm_ui.h"
+#include "library/MnmDump.h"
+
+#include <dirent.h>
+#include <string>
+#include <unordered_set>
+#include <vector>
 #include "mnm_shm.h"
 
 extern char** environ;
@@ -78,6 +86,20 @@ struct Params {
     bool synMemSet[kMaxMachineId] = {};
 };
 
+// ---- presets: an Init per machine, then every matching sound (kit track) of the user's .syx dumps.
+// Built by the supervisor thread (it parses files and allocates); the callback only reads it, through an
+// atomic pointer. A replaced catalog is freed a second later, long after any get_param reading it returned.
+struct PresetSound {
+    char name[28];
+    int machine;
+    int level;
+    uint8_t params[56];   // SYN AMP FILT EFX (32) + LFO 1-3 (24), raw, as in a kit track
+};
+struct Catalog {
+    std::vector<PresetSound> sounds;
+    uint64_t signature = 0;   // of the dump files it was built from
+};
+
 struct Instance {
     char moduleDir[512];
     pthread_t supervisor{};
@@ -90,6 +112,8 @@ struct Instance {
     uint32_t notesIn = 0;      // callback-only diagnostics, read by get_param("status") on the same thread
     int32_t peak = 0;          // max |sample| of the output since the last status read (int16)
     Params params;
+    std::atomic<Catalog*> catalog{nullptr};
+    int presetIndex = 0;
     int depth = kDefaultDepth;
     float lastBpm = 0.f;
     uint32_t bpmTick = 0;
@@ -246,6 +270,108 @@ int* rawSlot(Params& p, const ui::ParamDef& d)
     return &p.lfo[d.page - 4][d.index];
 }
 
+int presetCount(const Instance& in)
+{
+    const Catalog* c = in.catalog.load(std::memory_order_acquire);
+    return kMachineCount + (c ? int(c->sounds.size()) : 0);
+}
+
+int presetName(const Instance& in, int i, char* buf, int len)
+{
+    if (i < 0 || i >= presetCount(in)) return -1;
+    if (i < kMachineCount) return std::snprintf(buf, size_t(len), "Init %s", kMachineList[i].label);
+    return std::snprintf(buf, size_t(len), "%s", in.catalog.load(std::memory_order_acquire)->sounds[size_t(i - kMachineCount)].name);
+}
+
+// Loads a whole sound: machine, every page, the LFOs and the level. Init = the machine's defaults.
+void loadPreset(Instance& in, int i)
+{
+    if (i < 0 || i >= presetCount(in)) return;
+    in.presetIndex = i;
+    auto& p = in.params;
+    if (i < kMachineCount) {
+        const int m = kMachineList[i].id;
+        if (p.machine >= 0 && p.machine < kMaxMachineId) p.synMemSet[p.machine] = false;
+        p.machine = m;
+        loadDefaults(p);
+        p.level = 100;
+    } else {
+        const auto& snd = in.catalog.load(std::memory_order_acquire)->sounds[size_t(i - kMachineCount)];
+        p.machine = snd.machine;
+        for (int k = 0; k < 32; ++k) p.page[k / 8][k % 8] = snd.params[k];
+        for (int k = 0; k < 24; ++k) p.lfo[k / 8][k % 8] = snd.params[32 + k];
+        p.level = snd.level;
+    }
+    if (p.machine < kMaxMachineId) p.synMemSet[p.machine] = false;   // the preset's own SYN values are current
+    replay(in);
+}
+
+// Signature of the dump folders: file names, sizes and mtimes. A change triggers a rebuild.
+uint64_t scanDumps(const Instance& in, std::vector<std::string>* files)
+{
+    const char* dirs[] = {"%s/dumps", "%s/../../audio_fx/monomodule-fx/dumps", "%s/../../sound_generators/monomodule-one/dumps"};
+    uint64_t h = 1469598103934665603ull;
+    auto mix = [&](uint64_t v) { h ^= v; h *= 1099511628211ull; };
+    std::unordered_set<std::string> seenReal;
+    for (const char* fmt : dirs) {
+        char dir[700];
+        std::snprintf(dir, sizeof dir, fmt, in.moduleDir);
+        char real[PATH_MAX];
+        if (!realpath(dir, real) || !seenReal.insert(real).second) continue;   // own dir == sibling's own
+        DIR* d = opendir(real);
+        if (!d) continue;
+        while (dirent* e = readdir(d)) {
+            const size_t n = std::strlen(e->d_name);
+            if (n < 5 || strcasecmp(e->d_name + n - 4, ".syx") != 0) continue;
+            std::string path = std::string(real) + "/" + e->d_name;
+            struct stat st{};
+            if (stat(path.c_str(), &st) != 0) continue;
+            for (const char* c = e->d_name; *c; ++c) mix(uint8_t(*c));
+            mix(uint64_t(st.st_size)); mix(uint64_t(st.st_mtime));
+            if (files) files->push_back(path);
+        }
+        closedir(d);
+    }
+    return h;
+}
+
+Catalog* buildCatalog(const Instance& in, uint64_t signature, const std::vector<std::string>& files)
+{
+    auto* cat = new Catalog();
+    cat->signature = signature;
+    std::unordered_set<std::string> seen;   // the same sound in several dumps is listed once
+    for (const auto& path : files) {
+        FILE* f = std::fopen(path.c_str(), "rb");
+        if (!f) continue;
+        std::vector<uint8_t> data;
+        uint8_t buf[65536];
+        size_t n;
+        while ((n = std::fread(buf, 1, sizeof buf, f)) > 0 && data.size() < (64u << 20)) data.insert(data.end(), buf, buf + n);
+        std::fclose(f);
+        mnm::dump::Dump dump;
+        try { dump = mnm::dump::parseDump(data.data(), data.size(), path); } catch (...) { continue; }
+        for (const auto& kit : dump.kits) {
+            if (kit.isEmptySlot()) continue;
+            for (int t = 0; t < 6; ++t) {
+                const auto& tr = kit.tracks[t];
+                if (!validMachine(tr.model)) continue;   // One lists synth sounds, FX lists FX sounds
+                if (tr.model == int(host::Machine::GND)) continue;   // an unused track, not a sound
+                std::string key(reinterpret_cast<const char*>(tr.params), 56);
+                key += char(tr.model); key += char(tr.level);
+                if (!seen.insert(key).second) continue;
+                PresetSound snd{};
+                std::snprintf(snd.name, sizeof snd.name, "%s %d", kit.name.c_str(), t + 1);
+                snd.machine = tr.model;
+                snd.level = std::min<int>(tr.level, 127);
+                std::memcpy(snd.params, tr.params, 56);
+                for (auto& b : snd.params) b = std::min<uint8_t>(b, 127);
+                cat->sounds.push_back(snd);
+            }
+        }
+    }
+    return cat;
+}
+
 // ---------------------------------------------------------------------------------------------------- supervisor
 
 bool spawnChild(Instance& in, int fd, const char* osPath, pid_t& pid)
@@ -287,6 +413,7 @@ void resetSegment(shm::Segment& s, bool fx, int depth)
 void freeWhenStopped(Instance& in)
 {
     while (!in.stop.load(std::memory_order_acquire)) futexWaitPrivateMs(&in.stop, 0, 1000);
+    delete in.catalog.exchange(nullptr);   // destroy has returned: no callback reads it any more
     in.~Instance();
     std::free(&in);
 }
@@ -351,6 +478,22 @@ void* supervise(void* arg)
     new (seg) shm::Segment();
     seg->magic = shm::kMagic; seg->version = shm::kVersion;
 
+    Catalog* retired = nullptr;
+    int retiredPolls = 0, dumpPolls = 0;
+    auto refreshPresets = [&] {
+        if (retired && ++retiredPolls >= 10) { delete retired; retired = nullptr; }   // ~1 s after it was replaced
+        if (dumpPolls++ % 30 != 0) return;                                            // look every ~3 s
+        std::vector<std::string> files;
+        const uint64_t sig = scanDumps(in, &files);
+        Catalog* cur = in.catalog.load();
+        if (cur && cur->signature == sig) return;
+        if (!cur && files.empty()) return;
+        if (retired) { delete retired; retired = nullptr; }
+        Catalog* next = buildCatalog(in, sig, files);
+        in.catalog.store(next, std::memory_order_release);
+        retired = cur; retiredPolls = 0;
+    };
+
     constexpr int kMaxQuickFailures = 5;       // consecutive failures before giving up
     constexpr int kBootTimeoutPolls = 300;     // 30 s to reach Ready (0.4 s on a CM5)
     const bool fx = MNM_FX != 0;
@@ -369,6 +512,7 @@ void* supervise(void* arg)
             stalledPolls = 0; bootPolls = 0;
         }
         if (sleepOrStop(in, 100)) break;
+        refreshPresets();
 
         int status = 0;
         if (waitpid(pid, &status, WNOHANG) == pid) {
@@ -421,7 +565,8 @@ void* supervise(void* arg)
     in.seg.store(nullptr, std::memory_order_release);
     munmap(seg, sizeof(shm::Segment));
     close(fd);
-    freeWhenStopped(in);
+    delete retired;
+    freeWhenStopped(in);   // frees the instance and the current catalog
     return nullptr;
 }
 
@@ -543,6 +688,7 @@ void setParam(void* ptr, const char* key, const char* val)
     if (!key || !val) return;
     const char* k = std::strrchr(key, ':'); k = k ? k + 1 : key;   // "<prefix>:state"
     if (std::strcmp(k, "state") == 0) { readState(in, val); return; }
+    if (std::strcmp(k, "preset") == 0) { loadPreset(in, std::atoi(val)); return; }
     if (std::strcmp(k, "machine") == 0) {
         int m;
         if (parseMachine(val, m) && m != in.params.machine) switchMachine(in, m);
@@ -583,6 +729,9 @@ int getParam(void* ptr, const char* key, char* buf, int len)
         return m ? std::snprintf(buf, size_t(len), "%s", m->label) : -1;
     }
     if (std::strcmp(k, "level") == 0) return std::snprintf(buf, size_t(len), "%d", in.params.level);
+    if (std::strcmp(k, "preset") == 0) return std::snprintf(buf, size_t(len), "%d", in.presetIndex);
+    if (std::strcmp(k, "preset_count") == 0) return std::snprintf(buf, size_t(len), "%d", presetCount(in));
+    if (std::strcmp(k, "preset_name") == 0) return presetName(in, in.presetIndex, buf, len);
     if (std::strcmp(k, "depth") == 0) return std::snprintf(buf, size_t(len), "%d", in.depth);
     if (std::strcmp(k, "load") == 0) return std::snprintf(buf, size_t(len), "%d", loadPercent(in));
     if (std::strcmp(k, "status") == 0) {   // diagnostics

@@ -8,25 +8,36 @@
   "license": "GPL-3.0",
   "dsp": "monomodule-fx.so",
   "api_version": 2,
-  "assets": {
-    "path": "os",
-    "label": "Monomachine OS",
-    "extensions": [
-      ".syx"
-    ],
-    "description": "Requires the Monomachine OS 1.32B file, a free download from Elektron.",
-    "hint": "Download Elektron_SFX6-60_OS1.32B.zip from elektron.se, unzip it and upload the .syx file.",
-    "hint_url": "https://www.elektron.se/wp-content/uploads/2024/09/Elektron_SFX6-60_OS1.32B.zip",
-    "hint_url_label": "Download (Elektron)",
-    "files": [
-      {
-        "filename": "Elektron_SFX6-60_OS1.32B.syx",
-        "label": "Monomachine OS 1.32B",
-        "size": 903066,
-        "required": true
-      }
-    ]
-  },
+  "assets": [
+    {
+      "path": "os",
+      "label": "Monomachine OS",
+      "extensions": [
+        ".syx"
+      ],
+      "description": "Requires the Monomachine OS 1.32B file, a free download from Elektron.",
+      "hint": "Download Elektron_SFX6-60_OS1.32B.zip from elektron.se, unzip it and upload the .syx file.",
+      "hint_url": "https://www.elektron.se/wp-content/uploads/2024/09/Elektron_SFX6-60_OS1.32B.zip",
+      "hint_url_label": "Download (Elektron)",
+      "files": [
+        {
+          "filename": "Elektron_SFX6-60_OS1.32B.syx",
+          "label": "Monomachine OS 1.32B",
+          "size": 903066,
+          "required": true
+        }
+      ]
+    },
+    {
+      "path": "dumps",
+      "label": "Monomachine sysex dumps",
+      "extensions": [
+        ".syx"
+      ],
+      "optional": true,
+      "description": "Optional: kit dumps from a Monomachine (.syx). Every sound in them appears in the Presets browser of Monomodule One (synth sounds) and Monomodule FX (FX sounds)."
+    }
+  ],
   "capabilities": {
     "chainable": true,
     "component_type": "audio_fx",
@@ -154,7 +165,7 @@
     ],
     "requires_continuous_processing": true,
     "ui_hierarchy": {"levels": {
-      "root": {"name": "Monomodule FX", "params": [{"key": "machine", "name": "MACHN", "type": "enum", "options": ["THRU", "REVERB", "CHORUS", "DYNAMIX", "RINGMOD", "PHASER", "FLANGER"], "default": "THRU", "options_as_string": true}, {"key": "level", "name": "LEVEL", "type": "int", "min": 0, "max": 127, "default": 100}, {"key": "depth", "name": "LTNCY", "type": "int", "min": 1, "max": 4, "default": 2}, {"key": "load", "name": "LOAD", "type": "int", "min": 0, "max": 100, "unit": "%", "access": "read", "live": true}, {"level": "syn_thru", "label": "THRU", "visible_if": {"param": "machine", "equals": "THRU"}}, {"level": "syn_rev", "label": "REVERB", "visible_if": {"param": "machine", "equals": "REVERB"}}, {"level": "syn_cho", "label": "CHORUS", "visible_if": {"param": "machine", "equals": "CHORUS"}}, {"level": "syn_dyn", "label": "DYNAMIX", "visible_if": {"param": "machine", "equals": "DYNAMIX"}}, {"level": "syn_ring", "label": "RINGMOD", "visible_if": {"param": "machine", "equals": "RINGMOD"}}, {"level": "syn_pha", "label": "PHASER", "visible_if": {"param": "machine", "equals": "PHASER"}}, {"level": "syn_fla", "label": "FLANGER", "visible_if": {"param": "machine", "equals": "FLANGER"}}, {"level": "amp", "label": "AMP"}, {"level": "filt", "label": "FILT"}, {"level": "efx", "label": "EFX"}, {"level": "lfo1", "label": "LFO1"}, {"level": "lfo2", "label": "LFO2"}, {"level": "lfo3", "label": "LFO3"}], "knobs": ["machine", "level", "depth", "load"]},
+      "root": {"name": "Monomodule FX", "list_param": "preset", "count_param": "preset_count", "name_param": "preset_name", "params": [{"key": "machine", "name": "MACHN", "type": "enum", "options": ["THRU", "REVERB", "CHORUS", "DYNAMIX", "RINGMOD", "PHASER", "FLANGER"], "default": "THRU", "options_as_string": true}, {"key": "level", "name": "LEVEL", "type": "int", "min": 0, "max": 127, "default": 100}, {"key": "depth", "name": "LTNCY", "type": "int", "min": 1, "max": 4, "default": 2}, {"key": "load", "name": "LOAD", "type": "int", "min": 0, "max": 100, "unit": "%", "access": "read", "live": true}, {"level": "syn_thru", "label": "THRU", "visible_if": {"param": "machine", "equals": "THRU"}}, {"level": "syn_rev", "label": "REVERB", "visible_if": {"param": "machine", "equals": "REVERB"}}, {"level": "syn_cho", "label": "CHORUS", "visible_if": {"param": "machine", "equals": "CHORUS"}}, {"level": "syn_dyn", "label": "DYNAMIX", "visible_if": {"param": "machine", "equals": "DYNAMIX"}}, {"level": "syn_ring", "label": "RINGMOD", "visible_if": {"param": "machine", "equals": "RINGMOD"}}, {"level": "syn_pha", "label": "PHASER", "visible_if": {"param": "machine", "equals": "PHASER"}}, {"level": "syn_fla", "label": "FLANGER", "visible_if": {"param": "machine", "equals": "FLANGER"}}, {"level": "amp", "label": "AMP"}, {"level": "filt", "label": "FILT"}, {"level": "efx", "label": "EFX"}, {"level": "lfo1", "label": "LFO1"}, {"level": "lfo2", "label": "LFO2"}, {"level": "lfo3", "label": "LFO3"}], "knobs": ["machine", "level", "depth", "load"]},
       "syn_thru": {"name": "THRU", "visible_if": {"param": "machine", "equals": "THRU"}, "params": [{"key": "thru_inp", "name": "INP", "type": "int", "min": 0, "max": 127}], "knobs": ["", "", "", "", "", "", "", "thru_inp"]},
       "syn_rev": {"name": "REVERB", "visible_if": {"param": "machine", "equals": "REVERB"}, "params": [{"key": "rev_dec", "name": "DEC", "type": "int", "min": 0, "max": 127}, {"key": "rev_damp", "name": "DAMP", "type": "int", "min": 0, "max": 127}, {"key": "rev_gate", "name": "GATE", "type": "int", "min": 0, "max": 127}, {"key": "rev_mix", "name": "MIX", "type": "int", "min": 0, "max": 127}, {"key": "rev_hp", "name": "HP", "type": "int", "min": 0, "max": 127}, {"key": "rev_lp", "name": "LP", "type": "int", "min": 0, "max": 127}, {"key": "rev_inp", "name": "INP", "type": "int", "min": 0, "max": 127}], "knobs": ["rev_dec", "rev_damp", "rev_gate", "rev_mix", "rev_hp", "rev_lp", "", "rev_inp"]},
       "syn_cho": {"name": "CHORUS", "visible_if": {"param": "machine", "equals": "CHORUS"}, "params": [{"key": "cho_del", "name": "DEL", "type": "int", "min": 0, "max": 127}, {"key": "cho_dep", "name": "DEP", "type": "int", "min": 0, "max": 127}, {"key": "cho_spd", "name": "SPD", "type": "int", "min": 0, "max": 127}, {"key": "cho_mix", "name": "MIX", "type": "int", "min": 0, "max": 127}, {"key": "cho_fb", "name": "FB", "type": "int", "min": 0, "max": 127}, {"key": "cho_wid", "name": "WID", "type": "int", "min": 0, "max": 127}, {"key": "cho_lp", "name": "LP", "type": "int", "min": 0, "max": 127}, {"key": "cho_inp", "name": "INP", "type": "int", "min": -64, "max": 63}], "knobs": ["cho_del", "cho_dep", "cho_spd", "cho_mix", "cho_fb", "cho_wid", "cho_lp", "cho_inp"]},

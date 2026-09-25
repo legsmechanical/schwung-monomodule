@@ -126,7 +126,8 @@ def build(variant):
 
     root_params = [c for c in chain[:4]] + nav
     title = "Monomodule FX" if fx else "Monomodule One"
-    levels = {"root": {"name": title, "params": root_params, "knobs": ["machine", "level", "depth", "load"]}, **levels}
+    levels = {"root": {"name": title, "list_param": "preset", "count_param": "preset_count", "name_param": "preset_name",
+                       "params": root_params, "knobs": ["machine", "level", "depth", "load"]}, **levels}
     keys = [c["key"] for c in chain]
     dupes = {k for k in keys if keys.count(k) > 1}
     assert not dupes, f"duplicate keys: {dupes}"   # a repeated key makes the host drop ALL metadata
@@ -218,6 +219,11 @@ def main():
         j = json.loads(path.read_text())
         hier, chain, _, _ = variants[v]
         j["capabilities"]["chain_params"] = chain
+        os_asset = j["assets"] if isinstance(j["assets"], dict) else j["assets"][0]
+        j["assets"] = [os_asset, {
+            "path": "dumps", "label": "Monomachine sysex dumps", "extensions": [".syx"], "optional": True,
+            "description": "Optional: kit dumps from a Monomachine (.syx). Every sound in them appears in the Presets "
+                           "browser of Monomodule One (synth sounds) and Monomodule FX (FX sounds)."}]
         if v == "fx": j["capabilities"]["ui_hierarchy"] = hier
         else: j["capabilities"].pop("ui_hierarchy", None)
         outputs[path] = module_json_text(j)
