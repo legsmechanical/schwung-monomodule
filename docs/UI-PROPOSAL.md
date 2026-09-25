@@ -33,7 +33,8 @@ LFO1..3  PAGE DEST TRIG WAVE | MULT SPD INTL DPTH   <- DEST shows the target's n
   VO-6 consonants).
 - Unused hardware slots ("-") are blank cells, not dead knobs.
 - Switching machine swaps the SYN page and restores that machine's last values (as upstream One does).
-- The 7 FX machines are not in One's list (with no audio input they are silent there); they live in FX.
+- **Decided (Josh): no effects in One.** The 7 FX machines are only in Monomodule FX; to process a One
+  sound through one, put Monomodule FX after it.
 
 ## 3. Monomodule FX — the pages
 
