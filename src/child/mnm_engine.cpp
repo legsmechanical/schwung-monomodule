@@ -74,6 +74,11 @@ struct Engine {
     std::unique_ptr<MonoVoice> voice;
     uint32_t silentBlocks = 0;
     bool parked = false;
+    // A machine assign carries the kernel's init/trig flag, which plays the machine like a note (up to
+    // -9 dBFS for SWAVE ENS) - at boot, on every machine change and on every preset load. With no note
+    // held that is a sound nobody played: the assign is paired with a note-off (-46 dBFS left) and the
+    // output held at silence until the next note-on.
+    bool mutedUntilNote = false;
     bool woken = false;   // a command arrived for it this iteration
     host::Machine machine = host::Machine::GND;
     int heldNotes[16] = {};
@@ -93,6 +98,7 @@ void applyCmd(Engine& e, const shm::Cmd& c)
     auto& h = e.voice->host();
     switch (shm::Op(c.op)) {
     case shm::Op::NoteOn: {
+        e.mutedUntilNote = false;
         // mono, last-note priority
         int n = 0;
         for (int i = 0; i < e.held; ++i) if (e.heldNotes[i] != c.a) e.heldNotes[n++] = e.heldNotes[i];
@@ -119,6 +125,10 @@ void applyCmd(Engine& e, const shm::Cmd& c)
         e.machine = host::Machine(c.a);
         h.setMachine(e.machine);
         applyMachineRouting(e);
+        if (!host::isFxMachine(e.machine) && e.held == 0) {   // no note held: the init must not sound
+            h.noteOff();
+            e.mutedUntilNote = true;
+        }
         break;
     case shm::Op::SetParam:
         if (c.a < 4 && c.b < 8) h.setParam(host::Page(c.a), c.b, std::clamp(int(c.c), 0, 127));
@@ -132,6 +142,7 @@ void applyCmd(Engine& e, const shm::Cmd& c)
     case shm::Op::Reset:
         e.voice->reset();
         e.held = 0;
+        e.mutedUntilNote = !host::isFxMachine(e.machine);
         break;
     case shm::Op::None: break;
     }
@@ -251,6 +262,7 @@ int main(int argc, char** argv)
             }
             if (fxIn) v.processFx(inL.data(), inR.data(), L.data(), R.data(), shm::kFrames);
             else v.process(L.data(), R.data(), shm::kFrames);
+            if (e.mutedUntilNote) { std::fill(L.begin(), L.end(), 0.f); std::fill(R.begin(), R.end(), 0.f); }
             bool outputSilent = true;
             for (int i = 0; i < shm::kFrames; ++i) {
                 out[2 * i] = int32_t(std::lrint(L[size_t(i)] * 8388608.f));
