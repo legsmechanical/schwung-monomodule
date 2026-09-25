@@ -270,33 +270,32 @@ int* rawSlot(Params& p, const ui::ParamDef& d)
     return &p.lfo[d.page - 4][d.index];
 }
 
-int presetCount(const Instance& in)
-{
-    const Catalog* c = in.catalog.load(std::memory_order_acquire);
-    return kMachineCount + (c ? int(c->sounds.size()) : 0);
-}
+// Each call reads the catalog pointer ONCE: the supervisor may swap in a shorter list at any moment, and
+// a count from one catalog must never index another.
+int presetCount(const Catalog* c) { return kMachineCount + (c ? int(c->sounds.size()) : 0); }
+int presetCount(const Instance& in) { return presetCount(in.catalog.load(std::memory_order_acquire)); }
 
 int presetName(const Instance& in, int i, char* buf, int len)
 {
-    if (i < 0 || i >= presetCount(in)) return -1;
+    const Catalog* c = in.catalog.load(std::memory_order_acquire);
+    if (i < 0 || i >= presetCount(c)) return -1;
     if (i < kMachineCount) return std::snprintf(buf, size_t(len), "Init %s", kMachineList[i].label);
-    return std::snprintf(buf, size_t(len), "%s", in.catalog.load(std::memory_order_acquire)->sounds[size_t(i - kMachineCount)].name);
+    return std::snprintf(buf, size_t(len), "%s", c->sounds[size_t(i - kMachineCount)].name);
 }
 
 // Loads a whole sound: machine, every page, the LFOs and the level. Init = the machine's defaults.
 void loadPreset(Instance& in, int i)
 {
-    if (i < 0 || i >= presetCount(in)) return;
+    const Catalog* c = in.catalog.load(std::memory_order_acquire);
+    if (i < 0 || i >= presetCount(c)) return;
     in.presetIndex = i;
     auto& p = in.params;
     if (i < kMachineCount) {
-        const int m = kMachineList[i].id;
-        if (p.machine >= 0 && p.machine < kMaxMachineId) p.synMemSet[p.machine] = false;
-        p.machine = m;
+        p.machine = kMachineList[i].id;
         loadDefaults(p);
         p.level = 100;
     } else {
-        const auto& snd = in.catalog.load(std::memory_order_acquire)->sounds[size_t(i - kMachineCount)];
+        const auto& snd = c->sounds[size_t(i - kMachineCount)];
         p.machine = snd.machine;
         for (int k = 0; k < 32; ++k) p.page[k / 8][k % 8] = snd.params[k];
         for (int k = 0; k < 24; ++k) p.lfo[k / 8][k % 8] = snd.params[32 + k];
