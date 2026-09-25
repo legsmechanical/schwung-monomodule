@@ -38,6 +38,8 @@ add_executable(mnm-disasm tools/disasm/mnm_disasm.cpp)
 target_link_libraries(mnm-disasm PRIVATE mnmcore)
 
 # ---- the modules (Linux / Move only)
+# MNM_UI_COMPAT=ON: the closed-beta build for Schwung 1.4.0 (a gate-free UI; see mnm_plugin.cpp).
+option(MNM_UI_COMPAT "Serve the gate-free UI that host 1.4.0 can drive" OFF)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   # Engine process: one per module instance, spawned by the plugin.
   add_executable(mnm-engine src/child/mnm_engine.cpp)
@@ -55,7 +57,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     endif()
     add_library(mnm-plugin-${variant} SHARED src/plugin/mnm_plugin.cpp ${MNM_CORE}/library/MnmDump.cpp)
     set_target_properties(mnm-plugin-${variant} PROPERTIES OUTPUT_NAME ${_name} PREFIX "" CXX_VISIBILITY_PRESET hidden)
-    target_compile_definitions(mnm-plugin-${variant} PRIVATE MNM_FX=${_fx})
+    target_compile_definitions(mnm-plugin-${variant} PRIVATE MNM_FX=${_fx} MNM_UI_COMPAT=$<BOOL:${MNM_UI_COMPAT}>)
     target_include_directories(mnm-plugin-${variant} PRIVATE src src/common ${MNM_CORE})
     target_link_options(mnm-plugin-${variant} PRIVATE -static-libstdc++ -static-libgcc)
   endforeach()

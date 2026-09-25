@@ -70,6 +70,9 @@ constexpr int kMachineCount = ui::kFXMachineCount;
 constexpr const char* kHierarchy = ui::kFXHierarchy;
 constexpr const char* kChainParams = ui::kFXChainParams;
 constexpr const ui::SynLabels* kSynLabels = ui::kFXSynLabels;
+constexpr const char* kCompatHierarchy = ui::kFXCompatHierarchy;
+constexpr const ui::MachineJson* kCompatSyn = ui::kFXCompatSyn;
+constexpr const char* const (*kCompatDest)[9] = ui::kFXCompatDest;
 #else
 constexpr const ui::ParamDef* kDefs = ui::kONEParams;
 constexpr int kDefCount = ui::kONEParamCount;
@@ -78,6 +81,17 @@ constexpr int kMachineCount = ui::kONEMachineCount;
 constexpr const char* kHierarchy = ui::kONEHierarchy;
 constexpr const char* kChainParams = ui::kONEChainParams;
 constexpr const ui::SynLabels* kSynLabels = ui::kONESynLabels;
+constexpr const char* kCompatHierarchy = ui::kONECompatHierarchy;
+constexpr const ui::MachineJson* kCompatSyn = ui::kONECompatSyn;
+constexpr const char* const (*kCompatDest)[9] = ui::kONECompatDest;
+#endif
+// MNM_UI_COMPAT (the closed-beta build, for host 1.4.0): serve a hierarchy with NO visible_if gates. Host
+// 1.4.0 re-reads a gate only when the grid itself writes it, so a preset or a restored state could not
+// switch the machine page there (charlesvestal/schwung#533 came later). Instead the page set is rebuilt
+// from the current machine and LFO pages each time it is served, and every change that alters it arms
+// the is_loading edge that 1.4.0 already re-plans on.
+#ifndef MNM_UI_COMPAT
+#define MNM_UI_COMPAT 0
 #endif
 constexpr int kMaxMachineId = 40;   // host::Machine values go up to 33 (DDRW / DENS)
 
@@ -194,23 +208,66 @@ const char* synLabel(int machine, int n, char* tmp, int len)
     return tmp;
 }
 
-// Copies a generated JSON template into buf, filling @S0@..@S7@ with the current machine's SYN labels.
-int serveTemplate(const Instance& in, const char* tpl, char* buf, int len)
+const char* compatSynLevel(int machine)
 {
-    int n = 0;
+    for (int i = 0; i < kMachineCount; ++i) if (kCompatSyn[i].id == machine) return kCompatSyn[i].json;
+    return "{\"name\":\"SYN\",\"params\":[],\"knobs\":[]}";
+}
+
+int lfoPageIndex(const Params& p, int lfo) { return std::clamp(((2 * p.lfo[lfo][0] + 1) * 9) >> 8, 0, 8); }   // listIndex(raw, 9)
+
+// Copies a generated JSON template into buf, filling its placeholders:
+//   @S0@..@S7@  the current machine's SYN labels (LFO DEST on the SYNT page)
+//   @M@         the current machine's name                       (compat hierarchy)
+//   @SYNLEVEL@  the current machine's SYN level                  (compat hierarchy)
+//   @DPn@ @DKn@ LFO n's DEST entry / key for its current PAGE    (compat hierarchy)
+// Fragments are expanded the same way (a SYNT DEST entry carries @Sn@ itself). Returns -1 if it does not fit.
+int expandInto(const Instance& in, const char* tpl, char* buf, int len, int n)
+{
+    auto put = [&](const char* str, int l) { if (n + l >= len) return false; std::memcpy(buf + n, str, size_t(l)); n += l; return true; };
     for (const char* t = tpl; *t; ) {
-        if (t[0] == '@' && t[1] == 'S' && t[2] >= '0' && t[2] <= '7' && t[3] == '@') {
-            char tmp[8];
-            const char* lab = synLabel(in.params.machine, t[2] - '0', tmp, sizeof tmp);
-            const int l = int(std::strlen(lab));
-            if (n + l >= len) return -1;
-            std::memcpy(buf + n, lab, size_t(l));
-            n += l; t += 4;
-            continue;
+        if (t[0] == '@') {
+            if (t[1] == 'S' && t[2] >= '0' && t[2] <= '7' && t[3] == '@') {
+                char tmp[8];
+                const char* lab = synLabel(in.params.machine, t[2] - '0', tmp, sizeof tmp);
+                if (!put(lab, int(std::strlen(lab)))) return -1;
+                t += 4; continue;
+            }
+            if (std::strncmp(t, "@M@", 3) == 0) {
+                const auto* m = findMachine(in.params.machine);
+                const char* lab = m ? m->label : "SYN";
+                if (!put(lab, int(std::strlen(lab)))) return -1;
+                t += 3; continue;
+            }
+            if (std::strncmp(t, "@SYNLEVEL@", 10) == 0) {
+                if ((n = expandInto(in, compatSynLevel(in.params.machine), buf, len, n)) < 0) return -1;
+                t += 10; continue;
+            }
+            if ((t[1] == 'D') && (t[2] == 'P' || t[2] == 'K') && t[3] >= '1' && t[3] <= '3' && t[4] == '@') {
+                const int lfo = t[3] - '1';
+                const char* entry = kCompatDest[lfo][lfoPageIndex(in.params, lfo)];
+                if (t[2] == 'P') {
+                    if ((n = expandInto(in, entry, buf, len, n)) < 0) return -1;
+                } else {   // the key: the entry starts {"key":"lfoN_dest_xxx",
+                    const char* k = std::strstr(entry, "\"key\":\"");
+                    if (!k) return -1;
+                    k += 7;
+                    const char* e = std::strchr(k, '"');
+                    if (!e || !put(k, int(e - k))) return -1;
+                }
+                t += 5; continue;
+            }
         }
         if (n + 1 >= len) return -1;
         buf[n++] = *t++;
     }
+    return n;
+}
+
+int serveTemplate(const Instance& in, const char* tpl, char* buf, int len)
+{
+    const int n = expandInto(in, tpl, buf, len, 0);
+    if (n < 0) return -1;
     buf[n] = 0;
     return n;
 }
@@ -774,6 +831,7 @@ void setParam(void* ptr, const char* key, const char* val)
     int* slot = rawSlot(in.params, *d);
     if (!slot) return;
     *slot = raw;
+    if (MNM_UI_COMPAT && d->page >= 4 && d->index == 0) armReplan(in);   // an LFO PAGE: its DEST list changes
     if (d->page == 0 && d->machine != in.params.machine) return;   // remembered for when that machine is picked
     if (d->page <= 3) push(in, shm::Op::SetParam, d->page, d->index, raw);
     else push(in, shm::Op::SetLfo, d->page - 4, d->index, raw);
@@ -785,7 +843,7 @@ int getParam(void* ptr, const char* key, char* buf, int len)
     if (!key || !buf || len <= 0) return -1;
     const char* k = std::strrchr(key, ':'); k = k ? k + 1 : key;
     if (std::strcmp(k, "state") == 0) return writeState(in, buf, len);
-    if (std::strcmp(k, "ui_hierarchy") == 0) return serveTemplate(in, kHierarchy, buf, len);
+    if (std::strcmp(k, "ui_hierarchy") == 0) return serveTemplate(in, MNM_UI_COMPAT ? kCompatHierarchy : kHierarchy, buf, len);
     if (std::strcmp(k, "chain_params") == 0) return serveTemplate(in, kChainParams, buf, len);
     if (std::strcmp(k, "is_loading") == 0) return std::snprintf(buf, size_t(len), "%s", nowMs() < in.loadingUntilMs ? "1" : "0");
     if (std::strcmp(k, "machine") == 0) {

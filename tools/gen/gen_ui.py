@@ -146,6 +146,7 @@ def build(variant):
     chain = []       # chain_params
     levels = {}
     nav = []
+    compat = {"syn": {}, "dest": {}}   # pieces of the 1.4.0-compatible (gate-free) hierarchy
 
     labels = [machine_label(m) for m in machines]
     chain.append({"key": "machine", "name": "Machine", "short_name": "MACHN", "type": "enum", "options": labels,
@@ -173,6 +174,7 @@ def build(variant):
         lv = f"syn_{pre}"
         gate = {"param": "machine", "equals": label}
         levels[lv] = {"name": label, "visible_if": gate, "params": params, "knobs": knobs}
+        compat["syn"][m["index"]] = {"name": label, "params": params, "knobs": knobs}
         nav.append({"level": lv, "label": label, "visible_if": gate})
 
     # AMP / FILT / EFX
@@ -202,6 +204,7 @@ def build(variant):
                     vals = SYNT_PLACEHOLDERS if pname == "SYNT" else SPEC["lfoDest"][pg]
                     e = param_entry(key, "DEST", {"display": "list", "values": vals}, "lfo")
                     chain.append(dict(e))
+                    compat["dest"][(n, pg)] = dict(e)
                     e["visible_if"] = {"param": f"lfo{n}_page", "equals": pname}
                     params.append(e); knobs.append(key)
                     defs.append((key, 3 + n, i, KIND["synt"] if pname == "SYNT" else KIND["list"], 8, -1,
@@ -221,7 +224,28 @@ def build(variant):
     keys = [c["key"] for c in chain]
     dupes = {k for k in keys if keys.count(k) > 1}
     assert not dupes, f"duplicate keys: {dupes}"   # a repeated key makes the host drop ALL metadata
-    return {"levels": levels}, chain, defs, [(m["index"], l) for m, l in zip(machines, labels)]
+    # The 1.4.0-compatible hierarchy has no gates: ONE syn level holding the current machine's page and each
+    # LFO's DEST entry for its current PAGE, filled in by the plugin (@SYNLEVEL@, @DPn@ entry, @DKn@ key)
+    # and re-served on an is_loading edge whenever they change. Host 1.4.0 re-reads gates only for knob
+    # writes (charlesvestal/schwung#533 came after it), so a preset or state could not move a gate there.
+    clevels = {}
+    for name, lv in levels.items():
+        if name.startswith("syn_"): continue
+        if name.startswith("lfo"):
+            n = int(name[3])
+            ps = [q for q in lv["params"] if not q["key"].startswith(f"lfo{n}_dest_")]
+            ks = [k for k in lv["knobs"] if not k.startswith(f"lfo{n}_dest_")]
+            ps.insert(1, f"@DP{n}@"); ks.insert(1, f"@DK{n}@")
+            clevels[name] = {"name": lv["name"], "params": ps, "knobs": ks}
+        else:
+            clevels[name] = lv
+    croot = dict(levels["root"])
+    croot["params"] = [q for q in croot["params"] if not (isinstance(q, dict) and q.get("level", "").startswith("syn_"))]
+    croot["params"].insert(4, {"level": "syn", "label": "@M@"})
+    clevels["root"] = croot
+    clevels = {"root": croot, "syn": "@SYNLEVEL@", **{k: v for k, v in clevels.items() if k != "root"}}
+    compat["hierarchy"] = {"levels": clevels}
+    return {"levels": levels}, chain, defs, [(m["index"], l) for m, l in zip(machines, labels)], compat
 
 
 def cstr(s):
@@ -243,8 +267,9 @@ def header(variants):
            "    const char* const* values;",
            "};",
            "struct MachineDef { int16_t id; const char* label; };",
-           "struct SynLabels { int16_t id; const char* labels[8]; };   // nullptr = a blank hardware slot", ""]
-    for v, (hier, chain, defs, machines) in variants.items():
+           "struct SynLabels { int16_t id; const char* labels[8]; };   // nullptr = a blank hardware slot",
+           "struct MachineJson { int16_t id; const char* json; };", ""]
+    for v, (hier, chain, defs, machines, compat) in variants.items():
         V = v.upper()
         vals = {}
         for d in defs:
@@ -270,6 +295,17 @@ def header(variants):
         out.append(f"constexpr int k{V}MachineCount = {len(machines)};")
         js = json.dumps(hier, separators=(",", ":"))
         out.append(f"inline const char k{V}Hierarchy[] = {cstr(js)};")
+        # 1.4.0-compatible pieces: template (quoted placeholders become raw JSON), SYN level per machine,
+        # DEST entry per (LFO, PAGE)
+        cjs = json.dumps(compat["hierarchy"], separators=(",", ":"))
+        cjs = cjs.replace('"@SYNLEVEL@"', "@SYNLEVEL@")
+        for n in range(1, 4): cjs = cjs.replace(f'"@DP{n}@"', f"@DP{n}@")
+        out.append(f"inline const char k{V}CompatHierarchy[] = {cstr(cjs)};")
+        out.append(f"inline const MachineJson k{V}CompatSyn[] = {{" + ", ".join(
+            f"{{{mid}, {cstr(json.dumps(compat['syn'][mid], separators=(',', ':')))}}}" for mid, _ in machines) + "};")
+        out.append(f"inline const char* const k{V}CompatDest[3][9] = {{" + ", ".join(
+            "{" + ", ".join(cstr(json.dumps(compat['dest'][(n, pg)], separators=(',', ':'))) for pg in range(9)) + "}"
+            for n in range(1, 4)) + "};")
         out.append(f"constexpr int k{V}HierarchyLen = {len(js)};")
         out.append("")
     out.append("} // namespace mnm::ui")
@@ -317,7 +353,7 @@ def main():
     for v, mod in (("one", "monomodule-one"), ("fx", "monomodule-fx")):
         path = ROOT / f"modules/{mod}/module.json"
         j = json.loads(path.read_text())
-        hier, chain, _, _ = variants[v]
+        hier, chain, _, _, _ = variants[v]
         j["capabilities"]["chain_params"] = [
             dict(c, options=SPEC["lfoDest"][1]) if c.get("options") == SYNT_PLACEHOLDERS else c for c in chain]
         os_asset = j["assets"] if isinstance(j["assets"], dict) else j["assets"][0]
@@ -336,7 +372,7 @@ def main():
             if not check:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text)
-    for v, (hier, chain, defs, machines) in variants.items():
+    for v, (hier, chain, defs, machines, _) in variants.items():
         print(f"{v}: {len(machines)} machines, {len(defs)} engine params, {len(chain)} chain params, "
               f"hierarchy {len(json.dumps(hier, separators=(',', ':')))} bytes")
     for p in outputs:

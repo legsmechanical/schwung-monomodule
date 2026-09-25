@@ -94,6 +94,23 @@ int main(int argc, char** argv)
     }
     std::printf("boot to ready: %.0f ms\n", std::chrono::duration<double, std::milli>(Clock::now() - t0).count());
 
+    if (mode == "dumphier") {   // writes the served ui_hierarchy at each step to <dir>/hier_<step>.json
+        static char big[262144];
+        auto dump = [&](const char* step) {
+            const int h = syn ? syn->get_param(inst, "ui_hierarchy", big, sizeof big) : afx->get_param(inst, "ui_hierarchy", big, sizeof big);
+            std::string path = dir + "/hier_" + step + ".json";
+            if (FILE* f = std::fopen(path.c_str(), "w")) { if (h > 0) std::fwrite(big, 1, size_t(h), f); std::fclose(f); }
+            std::printf("  %-10s %6d bytes, is_loading %s\n", step, h, get("is_loading").c_str());
+        };
+        dump("start");
+        if (!fx) { set("machine", "SID 6581"); dump("sid"); }
+        else { set("machine", "REVERB"); dump("reverb"); }
+        run(0.45, ""); set("lfo1_page", "AMP"); dump("lfo1amp");
+        run(0.45, ""); set("lfo1_page", "SYNT"); dump("lfo1synt");
+        run(0.45, ""); set("preset", "3"); dump("preset3");
+        fx ? afx->destroy_instance(inst) : syn->destroy_instance(inst);
+        return 0;
+    }
     if (mode == "presets") {   // <dir>/dumps holds test_kits.syx (tools/gen/mkdump.cpp)
         int fails = 0;
         auto expect = [&](const char* k, const char* want) {
