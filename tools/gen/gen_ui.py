@@ -23,6 +23,25 @@ PAGES = ["syn", "amp", "filt", "efx"]          # engine page index 0..3; LFOs ar
 KIND = {"numeric": 0, "bipolar": 1, "list": 2, "readout": 3}
 
 
+def digibank_names():
+    """DDRW / DENS pick from the 64 Digibank slots. The factory bank is not in the OS file; upstream builds
+    a stand-in (libs/monomodule/src/core/dsp/Digibank.cpp): slots 1-32 are the DPRO-WAVE waveforms (no names
+    anywhere, so they stay D01-D32), slots 33-64 classic shapes it names itself. Read from that source so
+    the labels always match the bank the engine loads."""
+    src = (ROOT / "libs/monomodule/src/core/dsp/Digibank.cpp").read_text()
+    body = src[src.index("struct Shape"):]
+    names = re.findall(r'\{"([A-Z0-9]+)",', body)
+    assert len(names) == 32, f"expected 32 named stand-in shapes, found {len(names)}"
+    return [f"D{i + 1:02d}" for i in range(32)] + names
+
+
+DIGIBANK = digibank_names()
+for _m in SPEC["machines"]:   # Digibank slots, everywhere they are listed: the stand-in's names where it has them
+    for _p in _m["params"]:
+        if _p.get("values") and len(_p["values"]) == 64 and _p["values"][0] == "D01":
+            _p["values"] = DIGIBANK
+
+
 def machine_label(m):
     if m["group"] == "FX": return m["name"]
     if m["group"] == m["name"]: return m["name"]          # GND

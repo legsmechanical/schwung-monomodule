@@ -154,6 +154,8 @@ int main(int argc, char** argv)
         set("lfo1_page", "AMP"); expect("lfo1_dest_amp", "DIST");   // same raw slot (64 = 5th name), AMP page names
         set("lfo1_dest_amp", "PAN"); expect("lfo1_dest_amp", "PAN"); expect("lfo1_dest_ptch", "8OCT");
         set("fmd_1frq", ".999"); set("fmd_1frq", "1.5"); expect("fmd_1frq", "1.5");   // readout
+        set("machine", "DPRO DDRW"); set("ddrw_wav1", "SIN"); expect("ddrw_wav1", "SIN");   // Digibank slot 33 by name
+        set("ddrw_wav1", "32"); expect("ddrw_wav1", "SIN"); set("ddrw_wav2", "D05"); expect("ddrw_wav2", "D05");
         std::printf("  load = %s\n", get("load").c_str());
         const std::string st = get("state");
         std::printf("state: %s\n", st.c_str());
