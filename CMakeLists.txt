@@ -36,3 +36,33 @@ target_link_libraries(mnm-golden PRIVATE mnmcore)
 
 add_executable(mnm-disasm tools/disasm/mnm_disasm.cpp)
 target_link_libraries(mnm-disasm PRIVATE mnmcore)
+
+# ---- the modules (Linux / Move only)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  # Engine process: one per module instance, spawned by the plugin.
+  add_executable(mnm-engine src/child/mnm_engine.cpp)
+  target_include_directories(mnm-engine PRIVATE src/common)
+  target_link_libraries(mnm-engine PRIVATE mnmcore pthread)
+
+  # Plugins: loaded into MoveOriginal. Header-only use of the core (machine tables); no emulator, no JIT.
+  foreach(variant one fx)
+    if(variant STREQUAL "one")
+      set(_name dsp)
+      set(_fx 0)
+    else()
+      set(_name monomodule-fx)
+      set(_fx 1)
+    endif()
+    add_library(mnm-plugin-${variant} SHARED src/plugin/mnm_plugin.cpp)
+    set_target_properties(mnm-plugin-${variant} PROPERTIES OUTPUT_NAME ${_name} PREFIX "" CXX_VISIBILITY_PRESET hidden)
+    target_compile_definitions(mnm-plugin-${variant} PRIVATE MNM_FX=${_fx})
+    target_include_directories(mnm-plugin-${variant} PRIVATE src src/common ${MNM_CORE})
+    target_link_options(mnm-plugin-${variant} PRIVATE -static-libstdc++ -static-libgcc)
+  endforeach()
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_executable(mnm-hosttest tools/hosttest/mnm_hosttest.cpp)
+  target_include_directories(mnm-hosttest PRIVATE src)
+  target_link_libraries(mnm-hosttest PRIVATE dl pthread)
+endif()

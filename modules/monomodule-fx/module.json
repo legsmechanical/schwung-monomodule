@@ -1,0 +1,133 @@
+{
+  "id": "monomodule-fx",
+  "name": "Monomodule FX",
+  "abbrev": "MNMF",
+  "version": "0.0.1",
+  "description": "The Elektron Monomachine's FX machines, emulated at chip level (Monomodule by shnolk). Test build.",
+  "author": "shnolk (Monomodule); Schwung port: legsmechanical",
+  "license": "GPL-3.0",
+  "dsp": "monomodule-fx.so",
+  "api_version": 2,
+  "assets": {
+    "path": "os",
+    "label": "Monomachine OS",
+    "extensions": [
+      ".syx"
+    ],
+    "description": "Requires the Monomachine OS 1.32B file, a free download from Elektron.",
+    "hint": "Download Elektron_SFX6-60_OS1.32B.zip from elektron.se, unzip it and upload the .syx file.",
+    "hint_url": "https://www.elektron.se/wp-content/uploads/2024/09/Elektron_SFX6-60_OS1.32B.zip",
+    "hint_url_label": "Download (Elektron)",
+    "files": [
+      {
+        "filename": "Elektron_SFX6-60_OS1.32B.syx",
+        "label": "Monomachine OS 1.32B",
+        "size": 903066,
+        "required": true
+      }
+    ]
+  },
+  "capabilities": {
+    "chainable": true,
+    "component_type": "audio_fx",
+    "audio_in": true,
+    "forks_processes": true,
+    "chain_params": [
+      {
+        "key": "machine",
+        "name": "Machine",
+        "type": "enum",
+        "options": [
+          "THRU",
+          "REVERB",
+          "CHORUS",
+          "DYNAMIX",
+          "RINGMOD",
+          "PHASER",
+          "FLANGER"
+        ],
+        "default": "CHORUS"
+      },
+      {
+        "key": "syn1",
+        "name": "Syn1",
+        "type": "int",
+        "min": 0,
+        "max": 127,
+        "default": 64
+      },
+      {
+        "key": "syn2",
+        "name": "Syn2",
+        "type": "int",
+        "min": 0,
+        "max": 127,
+        "default": 64
+      },
+      {
+        "key": "syn3",
+        "name": "Syn3",
+        "type": "int",
+        "min": 0,
+        "max": 127,
+        "default": 64
+      },
+      {
+        "key": "syn4",
+        "name": "Syn4",
+        "type": "int",
+        "min": 0,
+        "max": 127,
+        "default": 64
+      },
+      {
+        "key": "syn5",
+        "name": "Syn5",
+        "type": "int",
+        "min": 0,
+        "max": 127,
+        "default": 64
+      },
+      {
+        "key": "syn6",
+        "name": "Syn6",
+        "type": "int",
+        "min": 0,
+        "max": 127,
+        "default": 64
+      },
+      {
+        "key": "syn7",
+        "name": "Syn7",
+        "type": "int",
+        "min": 0,
+        "max": 127,
+        "default": 64
+      },
+      {
+        "key": "syn8",
+        "name": "Syn8",
+        "type": "int",
+        "min": 0,
+        "max": 127,
+        "default": 64
+      },
+      {
+        "key": "level",
+        "name": "Level",
+        "type": "int",
+        "min": 0,
+        "max": 127,
+        "default": 64
+      },
+      {
+        "key": "depth",
+        "name": "Latency",
+        "type": "int",
+        "min": 1,
+        "max": 4,
+        "default": 2
+      }
+    ]
+  }
+}
