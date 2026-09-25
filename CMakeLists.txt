@@ -45,6 +45,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   add_executable(mnm-engine src/child/mnm_engine.cpp)
   target_include_directories(mnm-engine PRIVATE src/common)
   target_link_libraries(mnm-engine PRIVATE mnmcore pthread)
+  # Carry our own C++ runtime: a stock Move's /usr/lib/libstdc++.so.6 is older than the build image's
+  # (no GLIBCXX_3.4.30), and the loader refused the engine outright ("engine process exited (1)").
+  target_link_options(mnm-engine PRIVATE -static-libstdc++ -static-libgcc)
 
   # Plugins: loaded into MoveOriginal. Header-only use of the core (machine tables); no emulator, no JIT.
   foreach(variant one fx)
