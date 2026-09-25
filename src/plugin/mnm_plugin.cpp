@@ -499,17 +499,18 @@ Catalog* buildCatalog(const Instance& in, uint64_t signature, const std::vector<
 
 bool spawnChild(Instance& in, int fd, const char* osPath, pid_t& pid)
 {
-    char exe[600], os[600], log[600], prio[8];
+    char exe[600], os[600], log[600], prio[8], ppid[16];
     std::snprintf(exe, sizeof exe, "%s/mnm-engine", in.moduleDir);
     std::snprintf(os, sizeof os, "%s", osPath);
     std::snprintf(log, sizeof log, "%s/mnm-engine.log", in.moduleDir);
     std::snprintf(prio, sizeof prio, "%d", kDefaultFifo);
+    std::snprintf(ppid, sizeof ppid, "%d", int(getpid()));   // as this process sees itself (pid namespaces)
     posix_spawn_file_actions_t fa;
     posix_spawn_file_actions_init(&fa);
     posix_spawn_file_actions_adddup2(&fa, fd, 3);
     posix_spawn_file_actions_addopen(&fa, 1, log, O_WRONLY | O_CREAT | O_TRUNC, 0644);   // the emulator prints; one boot's worth
     posix_spawn_file_actions_adddup2(&fa, 1, 2);
-    char* argv[] = {exe, os, log, prio, nullptr};
+    char* argv[] = {exe, os, log, prio, ppid, nullptr};
     const int rc = posix_spawn(&pid, exe, &fa, nullptr, argv, environ);
     posix_spawn_file_actions_destroy(&fa);
     if (rc != 0) { std::snprintf(in.error, sizeof in.error, "cannot start %s: %s", exe, std::strerror(rc)); return false; }

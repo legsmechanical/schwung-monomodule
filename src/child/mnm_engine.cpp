@@ -152,11 +152,14 @@ void applyCmd(Engine& e, const shm::Cmd& c)
 
 int main(int argc, char** argv)
 {
-    if (argc < 3) { std::fprintf(stderr, "usage: mnm-engine <os.syx> <log-file> [fifo-priority]\n"); return 2; }
+    if (argc < 3) { std::fprintf(stderr, "usage: mnm-engine <os.syx> <log-file> [fifo-priority] [parent-pid]\n"); return 2; }
     g_log = std::fopen(argv[2], "a");
     const int fifo = argc > 3 ? std::atoi(argv[3]) : 10;
+    // The plugin's process id, as the plugin saw it. NOT "ppid == 1 means orphaned": on a stock Move the
+    // host runs in its own pid namespace, where it IS pid 1, and that test killed every engine at start.
+    const pid_t parent = argc > 4 ? pid_t(std::atoi(argv[4])) : getppid();
     prctl(PR_SET_PDEATHSIG, SIGKILL);   // die with the plugin's supervisor thread
-    if (getppid() == 1) return 1;       // the parent died before the prctl took effect
+    if (getppid() != parent) { logf("parent %d is gone (ppid %d): exiting", int(parent), int(getppid())); return 1; }
     prctl(PR_SET_NAME, "mnm-engine");
 
     auto* seg = static_cast<shm::Segment*>(mmap(nullptr, sizeof(shm::Segment), PROT_READ | PROT_WRITE, MAP_SHARED, 3, 0));
@@ -212,7 +215,7 @@ int main(int argc, char** argv)
     std::vector<float> L(shm::kFrames), R(shm::kFrames), inL(shm::kFrames), inR(shm::kFrames);
     const bool fxIn = s.hasInput != 0;
     while (!s.shutdown.load(std::memory_order_acquire)) {
-        if (getppid() == 1) break;   // MoveOriginal is gone
+        if (getppid() != parent) break;   // the host process is gone
         s.heartbeat.fetch_add(1, std::memory_order_relaxed);
         const uint32_t hb = s.host_block.load(std::memory_order_acquire);
         const uint32_t depth = std::clamp<uint32_t>(s.depth.load(std::memory_order_relaxed), 1, shm::kMaxDepth);
