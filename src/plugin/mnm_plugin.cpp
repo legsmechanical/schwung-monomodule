@@ -496,9 +496,9 @@ int getParam(void* ptr, const char* key, char* buf, int len)
         auto* s = in.seg.load();
         if (!s) return std::snprintf(buf, size_t(len), "{\"phase\":\"none\",\"error\":\"%s\"}", in.error);
         return std::snprintf(buf, size_t(len),
-            "{\"notes\":%u,\"peak\":%d,\"phase\":%u,\"pid\":%u,\"underruns\":%u,\"skips\":%u,\"respawns\":%u,\"last_us\":%u,\"max_us\":%u,\"faulted\":%u,\"depth\":%d}",
+            "{\"notes\":%u,\"peak\":%d,\"phase\":%u,\"pid\":%u,\"underruns\":%u,\"skips\":%u,\"respawns\":%u,\"last_us\":%u,\"max_us\":%u,\"faulted\":%u,\"parked\":%u,\"parked_blocks\":%u,\"depth\":%d}",
             in.notesIn, std::exchange(in.peak, 0), s->phase.load(), s->child_pid.load(), s->underruns.load(), s->skips.load(), in.respawns.load(), s->stats[0].lastUs.load(),
-            s->stats[0].maxUs.load(), s->stats[0].faulted.load(), in.depth);
+            s->stats[0].maxUs.load(), s->stats[0].faulted.load(), s->stats[0].parked.load(), s->stats[0].parkedBlocks.load(), in.depth);
     }
     for (int pg = 0; pg < 4; ++pg) {
         const size_t n = std::strlen(kPageKeys[pg]);

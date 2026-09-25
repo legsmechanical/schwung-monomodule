@@ -32,6 +32,11 @@ public:
     // Schwung: renders every machine once so the JIT compiles all their code now (the first block of a
     // machine otherwise stalls for 5-30 ms on a CM5), then returns to the state of a fresh voice.
     void prewarm();
+    // Schwung: an idle engine skips the DSP. Advances the host model (frame counter, LFOs, slew) by
+    // `frames` (a multiple of 16) as if blocks had been rendered, and outputs silence. The FIFO keeps
+    // its position (so an FX engine's input/output alignment survives), filled with zeros. Not
+    // bit-exact on wake: the DSP's free-running state (oscillator phases) is where it stopped.
+    void skip(int frames);
 
 private:
     host::HostModel m_host;

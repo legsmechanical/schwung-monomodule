@@ -74,6 +74,12 @@ void MonoVoice::prewarm()
     m_inPos = 0; m_pos = 0; m_avail = 0;
 }
 
+void MonoVoice::skip(int frames)
+{
+    for (int k = 0; k < frames / dsp::DspEngine::kBlockFrames; ++k) m_host.nextBlock();
+    m_fifo.fill(0);
+}
+
 void MonoVoice::warmUp(int blocks)
 {
     m_host.settle();   // start from settled words (the hardware glides in over ~0.2 s after a kit load)

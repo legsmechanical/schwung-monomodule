@@ -78,6 +78,18 @@ a core busy and boosts it, the real engine works in bursts and mostly runs near 
 in-Move numbers are the real ones**; bench numbers are for comparing changes. A CM4's governor
 range decides its real cost — another reason the beta must report load from real devices.
 
+## Idle parking (not bit-exact on wake; Josh approved 2026-09-25)
+
+An engine sleeps once no note is held and its output (and, for FX, input) has been silent at the
+host's 16 bits for 2 s; the DSP is skipped, the host model (frame counter, LFOs, slew) keeps
+ticking. Any command or non-silent input wakes it before the block renders. After a note every
+synth machine is exactly silent ~2 s after note-off; THRU/CHORUS/PHASER/FLANGER within 0.2 s of the
+input stopping; REVERB, DYNAMIX and RINGMOD settle into a 1-43 LSB residue (-106..-138 dBFS) that
+is exactly zero at 16 bits (`mnm-bench --silence`).
+
+Measured inside the plugin path on the CM5 (`mnm-hosttest one park`): engine process 0.4% of a
+core asleep vs 15.2% playing (FM+ PAR, real clock under ondemand).
+
 ## Bit-exactness gate
 
 `mnm-golden <os.syx>` renders a fixed script on all 22 machines (notes, parameter sweeps on every

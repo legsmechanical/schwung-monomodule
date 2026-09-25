@@ -17,7 +17,7 @@
 namespace mnm::shm {
 
 constexpr uint32_t kMagic = 0x4D4E4D31;   // "MNM1"
-constexpr uint32_t kVersion = 1;
+constexpr uint32_t kVersion = 2;   // 2: EngineStats.parked, parkedBlocks
 constexpr int kMaxEngines = 8;
 constexpr int kFrames = 128;               // one Move block
 constexpr int kSlots = 8;                  // power of two, > max depth
@@ -54,6 +54,8 @@ struct EngineStats {
     std::atomic<uint32_t> lastUs, maxUs;   // per 128-frame block
     std::atomic<uint32_t> blocks;
     std::atomic<uint32_t> faulted;
+    std::atomic<uint32_t> parked;          // 1 while the engine sleeps (idle: DSP skipped)
+    std::atomic<uint32_t> parkedBlocks;    // total blocks skipped
 };
 
 struct Segment {

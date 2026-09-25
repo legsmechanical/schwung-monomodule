@@ -194,8 +194,43 @@ static int switchSpikes(const fw::Firmware& fw)
     return 0;
 }
 
+// --silence: per machine, a 0.5 s note (FX: 0.5 s of noise), then silence; how long until the output is
+// exactly zero (when idle parking can start counting). FX machines at default settings.
+static int silenceTimes(const fw::Firmware& fw)
+{
+    std::vector<float> L(kMoveFrames), R(kMoveFrames), in(kMoveFrames);
+    std::mt19937 rng(3);
+    std::uniform_real_distribution<float> noise(-0.5f, 0.5f);
+    for (const auto& def : host::kMachineDefs) {
+        MonoVoice v(fw);
+        auto& h = v.host();
+        const bool fx = host::isFxMachine(def.machine);
+        h.setMachine(def.machine);
+        h.setRouting(fx ? host::dspInputBits(host::FxInput::InpAB) : 0u);
+        v.warmUp(8);
+        h.noteOn(fx ? 60 : 48);
+        const int noteBlocks = int(0.5 * 44100 / kMoveFrames);
+        int lastNonZero = -1;
+        int32_t residue = 0;   // max |sample| (24-bit) over the last second
+        const int maxBlocks = int(30.0 * 44100 / kMoveFrames);
+        for (int b = 0; b < maxBlocks; ++b) {
+            if (!fx && b == noteBlocks) h.noteOff();
+            for (auto& x : in) x = (fx && b < noteBlocks) ? noise(rng) : 0.f;
+            if (fx) v.processFx(in.data(), in.data(), L.data(), R.data(), kMoveFrames); else v.process(L.data(), R.data(), kMoveFrames);
+            for (int i = 0; i < kMoveFrames; ++i) if (L[size_t(i)] != 0.f || R[size_t(i)] != 0.f) { lastNonZero = b; break; }
+            if (b >= maxBlocks - int(44100 / kMoveFrames))
+                for (int i = 0; i < kMoveFrames; ++i) residue = std::max(residue, std::max(std::abs(int32_t(std::lrint(L[size_t(i)] * 8388608.f))), std::abs(int32_t(std::lrint(R[size_t(i)] * 8388608.f)))));
+        }
+        const double t = (lastNonZero + 1 - noteBlocks) * kMoveFrames / 44100.0;
+        if (lastNonZero >= maxBlocks - 1) std::printf("%-11s NEVER exactly silent within 30 s; residue after 29 s: %d (24-bit LSB, %.0f dBFS)\n", def.name, residue, 20 * std::log10(std::max(1, residue) / 8388608.0));
+        else std::printf("%-11s exactly silent %.2f s after the note / input ended\n", def.name, t < 0 ? 0.0 : t);
+    }
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
+    if (argc > 2 && std::string(argv[2]) == "--silence") return silenceTimes(fw::loadFirmware(argv[1]));
     if (argc > 2 && std::string(argv[2]) == "--switch") return switchSpikes(fw::loadFirmware(argv[1]));
     if (argc > 3 && std::string(argv[2]) == "--engines") {
         const auto fw = fw::loadFirmware(argv[1]);

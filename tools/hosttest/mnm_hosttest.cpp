@@ -6,6 +6,7 @@
 //
 // late-os: the OS file is moved away before create and put back 3 s later (upload after adding the module).
 // destroy-in-boot: destroy while the engine is still pre-warming.
+// park: a note, 4 s of silence (the engine must sleep), then a note (it must wake and sound).
 //
 // The module dir holds module.json's files: dsp.so or monomodule-fx.so, mnm-engine, os/<OS file>.
 #include <chrono>
@@ -93,6 +94,32 @@ int main(int argc, char** argv)
     }
     std::printf("boot to ready: %.0f ms\n", std::chrono::duration<double, std::milli>(Clock::now() - t0).count());
 
+    if (mode == "park") {   // sleep after silence, wake on a note
+        auto field = [&](const char* k) { const auto st = get("status"); const auto p = st.find(std::string("\"") + k + "\":"); return p == std::string::npos ? -1 : std::atoi(st.c_str() + p + std::strlen(k) + 3); };
+        if (!fx) { midi(0x90, 48, 100); run(0.5, "note"); midi(0x80, 48, 0); }
+        run(4, "silence 4 s");
+        std::printf("parked %d, parked_blocks %d\n", field("parked"), field("parked_blocks"));
+        auto cpuTicks = [&](int pid) {   // utime + stime of the engine process, in clock ticks
+            char path[64]; std::snprintf(path, sizeof path, "/proc/%d/stat", pid);
+            FILE* f = std::fopen(path, "r"); if (!f) return -1L;
+            char buf[1024] = {}; std::fread(buf, 1, sizeof buf - 1, f); std::fclose(f);
+            const char* p = std::strrchr(buf, ')'); long ut = 0, st = 0; int field = 2;
+            for (const char* q = p + 1; *q && field < 15; ++q) if (*q == ' ') { ++field; if (field == 14) ut = std::atol(q + 1); if (field == 15) st = std::atol(q + 1); }
+            return ut + st;
+        };
+        const int pid = field("pid");
+        const long hz = sysconf(_SC_CLK_TCK);
+        long c0 = cpuTicks(pid); run(5, "asleep 5 s"); long c1 = cpuTicks(pid);
+        std::printf("engine CPU while asleep: %.1f%% of a core\n", 100.0 * (c1 - c0) / hz / 5);
+        if (!fx) midi(0x90, 48, 100);
+        c0 = cpuTicks(pid); run(5, "playing 5 s"); c1 = cpuTicks(pid);
+        std::printf("engine CPU while playing: %.1f%% of a core\n", 100.0 * (c1 - c0) / hz / 5);
+        if (!fx) midi(0x80, 48, 0);
+        if (!fx) { midi(0x90, 52, 100); run(0.5, "note after sleep"); midi(0x80, 52, 0); }
+        std::printf("parked %d after a note\n", field("parked"));
+        fx ? afx->destroy_instance(inst) : syn->destroy_instance(inst);
+        return 0;
+    }
     if (!fx) {
         midi(0x90, 48, 100); run(secs, "FM+ PAR note on");
         midi(0x80, 48, 0); run(1, "note off (tail)");

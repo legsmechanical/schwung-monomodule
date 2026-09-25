@@ -62,8 +62,17 @@ void fail(shm::Segment& s, const char* why)
     logf("FAILED: %s", why);
 }
 
+// Idle parking: an engine whose output (and, for FX, input) has been exactly zero for this long, with no
+// note held, stops running the DSP until a command or input audio arrives. Long enough for the EFX delay
+// and the reverb to have emptied: output that is exactly zero (at the host's 16 bits) for 2 s means nothing
+// is still in flight.
+constexpr uint32_t kParkAfterBlocks = 44100 * 2 / shm::kFrames;
+
 struct Engine {
     std::unique_ptr<MonoVoice> voice;
+    uint32_t silentBlocks = 0;
+    bool parked = false;
+    bool woken = false;   // a command arrived for it this iteration
     host::Machine machine = host::Machine::GND;
     int heldNotes[16] = {};
     int held = 0;
@@ -210,26 +219,47 @@ int main(int argc, char** argv)
         const uint32_t w = s.cmd_write.load(std::memory_order_acquire);
         for (; r != w; ++r) {
             const auto& c = s.cmds[r & (shm::kCmdSlots - 1)];
-            if (c.engine < n) applyCmd(engines[c.engine], c);
+            if (c.engine < n) { applyCmd(engines[c.engine], c); engines[c.engine].woken = true; }
         }
         s.cmd_read.store(r, std::memory_order_release);
 
         const int slot = int(next & (shm::kSlots - 1));
+        bool inputSilent = true;
         if (fxIn) {
             const int32_t* in = s.in[slot];
+            for (int i = 0; i < shm::kFrames * 2; ++i) if (in[i]) { inputSilent = false; break; }
             for (int i = 0; i < shm::kFrames; ++i) { inL[size_t(i)] = float(in[2 * i]) / 8388608.f; inR[size_t(i)] = float(in[2 * i + 1]) / 8388608.f; }
         }
         for (int k = 0; k < n; ++k) {
             const auto s0 = Clock::now();
-            auto& v = *engines[size_t(k)].voice;
+            auto& e = engines[size_t(k)];
+            auto& v = *e.voice;
+            auto& st = s.stats[k];
+            int32_t* out = s.out[slot][k];
+            if (e.parked && (e.woken || !inputSilent)) { e.parked = false; e.silentBlocks = 0; st.parked.store(0, std::memory_order_relaxed); }
+            e.woken = false;
+            if (e.parked) {
+                v.skip(shm::kFrames);
+                std::memset(out, 0, sizeof(int32_t) * shm::kFrames * 2);
+                st.parkedBlocks.fetch_add(1, std::memory_order_relaxed);
+                continue;
+            }
             if (fxIn) v.processFx(inL.data(), inR.data(), L.data(), R.data(), shm::kFrames);
             else v.process(L.data(), R.data(), shm::kFrames);
-            int32_t* out = s.out[slot][k];
+            bool outputSilent = true;
             for (int i = 0; i < shm::kFrames; ++i) {
                 out[2 * i] = int32_t(std::lrint(L[size_t(i)] * 8388608.f));
                 out[2 * i + 1] = int32_t(std::lrint(R[size_t(i)] * 8388608.f));
+                // silent as Move hears it: every sample rounds to 0 at 16 bits (|v| < 128 in 24-bit). REVERB,
+                // DYNAMIX and RINGMOD settle into a fixed-point residue (1-43 LSB, -106..-138 dBFS) that
+                // never reaches exact 24-bit zero but is exactly zero in the int16 the host gets.
+                if (uint32_t(out[2 * i] + 128) > 255u || uint32_t(out[2 * i + 1] + 128) > 255u) outputSilent = false;
             }
-            auto& st = s.stats[k];
+            if (outputSilent && inputSilent && e.held == 0) {
+                if (++e.silentBlocks >= kParkAfterBlocks) { e.parked = true; st.parked.store(1, std::memory_order_relaxed); }
+            } else {
+                e.silentBlocks = 0;
+            }
             const auto us = uint32_t(std::chrono::duration<double, std::micro>(Clock::now() - s0).count());
             st.lastUs.store(us, std::memory_order_relaxed);
             if (us > st.maxUs.load(std::memory_order_relaxed)) st.maxUs.store(us, std::memory_order_relaxed);
