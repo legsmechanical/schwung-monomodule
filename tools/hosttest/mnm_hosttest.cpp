@@ -116,6 +116,12 @@ int main(int argc, char** argv)
         } else {
             if (count != 8) { ++fails; std::printf("  WANT 8 presets\n"); }
             set("preset", "7"); expect("preset_name", "TESTKIT 3"); expect("machine", "REVERB"); expect("rev_dec", "100");
+            static char big[262144];
+            const int h = afx->get_param(inst, "ui_hierarchy", big, sizeof big);
+            const bool ok = h > 1000 && std::strstr(big, "\"DAMP\"") && !std::strstr(big, "@S");
+            if (!ok) ++fails;
+            std::printf("  FX serves its hierarchy (%d bytes) with REVERB's labels in LFO DEST: %s\n", h, ok ? "ok" : "BAD");
+            set("lfo2_page", "SYNT"); set("lfo2_dest_synt", "GATE"); expect("lfo2_dest_synt", "GATE");
             run(1, "REVERB preset on a sine");
         }
         std::printf("%s\n", fails ? "PRESETS FAIL" : "PRESETS PASS");
@@ -156,6 +162,25 @@ int main(int argc, char** argv)
         set("fmd_1frq", ".999"); set("fmd_1frq", "1.5"); expect("fmd_1frq", "1.5");   // readout
         set("machine", "DPRO DDRW"); set("ddrw_wav1", "SIN"); expect("ddrw_wav1", "SIN");   // Digibank slot 33 by name
         set("ddrw_wav1", "32"); expect("ddrw_wav1", "SIN"); set("ddrw_wav2", "D05"); expect("ddrw_wav2", "D05");
+        // LFO DEST on the SYNT page follows the machine
+        set("machine", "SID 6581"); expect("is_loading", "1");
+        set("lfo1_page", "SYNT"); expect("lfo1_dest_synt", "MFRQ");      // DEST still on slot 7 (PAN earlier): SID calls it MFRQ
+        set("lfo1_dest_synt", "PWAD"); expect("lfo1_dest_synt", "PWAD");
+        set("lfo1_dest_synt", "PAR1"); expect("lfo1_dest_synt", "PW");    // the generic name still selects
+        set("machine", "DPRO WAVE"); expect("lfo1_dest_synt", "WAVE"); set("lfo1_dest_synt", "6"); expect("lfo1_dest_synt", "PAR7");  // blank slot
+        {
+            static char big[262144];
+            const int h = syn ? syn->get_param(inst, "ui_hierarchy", big, sizeof big) : afx->get_param(inst, "ui_hierarchy", big, sizeof big);
+            const bool ok = h > 0 && std::strstr(big, "\"WPRS\"") && !std::strstr(big, "@S");
+            if (!ok) ++fails;
+            std::printf("  ui_hierarchy carries DPRO WAVE's labels, no placeholders: %s\n", ok ? "ok" : "BAD");
+            const int c = syn ? syn->get_param(inst, "chain_params", big, sizeof big) : afx->get_param(inst, "chain_params", big, sizeof big);
+            const bool ok2 = c > 0 && std::strstr(big, "\"SFRQ\"") && !std::strstr(big, "@S") && big[0] == '[';
+            if (!ok2) ++fails;
+            std::printf("  chain_params (%d bytes) carries them too: %s\n", c, ok2 ? "ok" : "BAD");
+        }
+        run(0.45, "");
+        expect("is_loading", "0");
         std::printf("  load = %s\n", get("load").c_str());
         const std::string st = get("state");
         std::printf("state: %s\n", st.c_str());

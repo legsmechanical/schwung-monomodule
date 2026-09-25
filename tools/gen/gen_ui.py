@@ -20,7 +20,8 @@ ROOT = Path(__file__).resolve().parents[2]
 SPEC = json.loads((ROOT / "tools/gen/spec.json").read_text())
 
 PAGES = ["syn", "amp", "filt", "efx"]          # engine page index 0..3; LFOs are 4..6
-KIND = {"numeric": 0, "bipolar": 1, "list": 2, "readout": 3}
+KIND = {"numeric": 0, "bipolar": 1, "list": 2, "readout": 3, "synt": 4}
+SYNT_PLACEHOLDERS = [f"@S{i}@" for i in range(8)]
 
 
 def digibank_names():
@@ -196,11 +197,15 @@ def build(variant):
             if p["label"] == "DEST":
                 for pg, pname in enumerate(pages):
                     key = f"lfo{n}_dest_{slug(pname)}"
-                    e = param_entry(key, "DEST", {"display": "list", "values": SPEC["lfoDest"][pg]}, "lfo")
+                    # SYNT: the current machine's own labels, filled in by the plugin when it serves the page
+                    # (placeholders @S0@..@S7@); module.json keeps the generic PAR1-8 as the static fallback.
+                    vals = SYNT_PLACEHOLDERS if pname == "SYNT" else SPEC["lfoDest"][pg]
+                    e = param_entry(key, "DEST", {"display": "list", "values": vals}, "lfo")
                     chain.append(dict(e))
                     e["visible_if"] = {"param": f"lfo{n}_page", "equals": pname}
                     params.append(e); knobs.append(key)
-                    defs.append((key, 3 + n, i, KIND["list"], 8, -1, SPEC["lfoDest"][pg], p["default"]))
+                    defs.append((key, 3 + n, i, KIND["synt"] if pname == "SYNT" else KIND["list"], 8, -1,
+                                 SPEC["lfoDest"][pg], p["default"]))
                 continue
             key = f"lfo{n}_{slug(p['label'])}"
             e = param_entry(key, p["label"], p, "lfo")
@@ -230,13 +235,15 @@ def header(variants):
            "    const char* key;",
            "    uint8_t page;       // 0 SYN 1 AMP 2 FILT 3 EFX 4..6 LFO1..3",
            "    uint8_t index;      // knob 0..7 on that page",
-           "    uint8_t kind;       // 0 numeric 0..127, 1 bipolar -64..63, 2 list (uneven buckets), 3 readout (one name per raw)",
+           "    uint8_t kind;       // 0 numeric 0..127, 1 bipolar -64..63, 2 list (uneven buckets), 3 readout (one name per raw),",
+           "                        // 4 LFO DEST on the SYNT page: 8 names = the current machine's SYN labels",
            "    uint8_t count;      // options of a list / readout",
            "    int16_t machine;    // SYN params: the machine they belong to (host::Machine), else -1",
            "    uint8_t defaultRaw;",
            "    const char* const* values;",
            "};",
-           "struct MachineDef { int16_t id; const char* label; };", ""]
+           "struct MachineDef { int16_t id; const char* label; };",
+           "struct SynLabels { int16_t id; const char* labels[8]; };   // nullptr = a blank hardware slot", ""]
     for v, (hier, chain, defs, machines) in variants.items():
         V = v.upper()
         vals = {}
@@ -252,6 +259,14 @@ def header(variants):
         out.append("};")
         out.append(f"constexpr int k{V}ParamCount = {len(defs)};")
         out.append(f"inline const MachineDef k{V}Machines[] = {{{', '.join(f'{{{i}, {cstr(l)}}}' for i, l in machines)}}};")
+        rows = []
+        for mid, _ in machines:
+            m = next(x for x in SPEC["machines"] if x["index"] == mid)
+            labs = [("nullptr" if q["display"] == "blank" else cstr(q["label"])) for q in m["params"]]
+            rows.append(f"{{{mid}, {{{', '.join(labs)}}}}}")
+        out.append(f"inline const SynLabels k{V}SynLabels[] = {{{', '.join(rows)}}};")
+        cjs = json.dumps(chain, separators=(",", ":"))
+        out.append(f"inline const char k{V}ChainParams[] = {cstr(cjs)};")
         out.append(f"constexpr int k{V}MachineCount = {len(machines)};")
         js = json.dumps(hier, separators=(",", ":"))
         out.append(f"inline const char k{V}Hierarchy[] = {cstr(js)};")
@@ -303,14 +318,16 @@ def main():
         path = ROOT / f"modules/{mod}/module.json"
         j = json.loads(path.read_text())
         hier, chain, _, _ = variants[v]
-        j["capabilities"]["chain_params"] = chain
+        j["capabilities"]["chain_params"] = [
+            dict(c, options=SPEC["lfoDest"][1]) if c.get("options") == SYNT_PLACEHOLDERS else c for c in chain]
         os_asset = j["assets"] if isinstance(j["assets"], dict) else j["assets"][0]
         j["assets"] = [os_asset, {
             "path": "dumps", "label": "Monomachine sysex dumps", "extensions": [".syx"], "optional": True,
             "description": "Optional: kit dumps from a Monomachine (.syx). Every sound in them appears in the Presets "
                            "browser of Monomodule One (synth sounds) and Monomodule FX (FX sounds)."}]
-        if v == "fx": j["capabilities"]["ui_hierarchy"] = hier
-        else: j["capabilities"].pop("ui_hierarchy", None)
+        # Both modules SERVE their hierarchy (get_param), so the SYNT DEST names can follow the machine. An
+        # audio FX would read a module.json hierarchy first and never ask, so it must not carry one.
+        j["capabilities"].pop("ui_hierarchy", None)
         outputs[path] = module_json_text(j)
     stale = []
     for path, text in outputs.items():
