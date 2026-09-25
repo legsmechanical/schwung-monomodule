@@ -35,6 +35,27 @@ After the lean harness the Mac profile is ~87% JIT-generated code. The DSP hands
 the run loop ~190 times per 16 frames (~43 instructions per `exec()`), so the remaining non-JIT
 cost is that loop plus peripheral ticking (~2%).
 
+## Memory per engine (CM5, PSS — VmRSS overstates it ~4x because dsp56300 maps one page many times)
+
+| change | PSS per engine |
+|---|---|
+| baseline | 183 MB |
+| interpreter opcode cache only built when the interpreter is enabled (patch 0002) | 112 MB |
+| ESSI audio ring buffers 32768 -> 256 frames (patch 0002; the harness streams no audio through ESSI) | 32 MB |
+
+The rest: DSP RAM (~19 MB, shm, mlocked) and the JIT's per-mode tables and code.
+
+## Several engines at once (CM5, SID on every engine, workers pinned to cores 0-2)
+
+| engines | makespan mean | p99 | notes |
+|---|---|---|---|
+| 1 | 9-12% | 17-28% | SCHED_OTHER |
+| 3 | 14.5% | 46% | SCHED_OTHER |
+| 3 | 19.8% | 36% | SCHED_FIFO 10 (works without root) |
+| 6 | 24-33% | 55-58% | 2 engines per core |
+
+Tails grow with the engine count; the child must be allowed to run a block or two ahead.
+
 ## Bit-exactness gate
 
 `mnm-golden <os.syx>` renders a fixed script on all 22 machines (notes, parameter sweeps on every

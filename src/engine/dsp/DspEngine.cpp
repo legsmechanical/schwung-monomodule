@@ -41,6 +41,7 @@ DspEngine::DspEngine(const fw::Firmware& fw) : m_fw(fw)
     m_periphX = std::make_unique<Peripherals56303>();
     m_periphY = std::make_unique<PeripheralsNop>();
     m_dsp = std::make_unique<DSP>(*m_mem, m_periphX.get(), m_periphY.get());
+    if (!m_useJit) m_dsp->setInterpreterEnabled(true);   // Schwung dsp56300 patch: its opcode cache is ~75 MB
     {
         // Kernel A keeps its main-loop code at P:$0087..$00FF, inside the interrupt-vector area that the
         // JIT would otherwise compile as 2-word fast-interrupt blocks.

@@ -1,0 +1,83 @@
+--- a/source/dsp56kEmu/dsp.cpp
++++ b/source/dsp56kEmu/dsp.cpp
+@@ -1004,7 +1004,7 @@
+ 
+ 		const auto res = mem.set(MemArea_P, _offset, _value);
+ 
+-		if (_offset < m_opcodeCache.size() && oldValue != _value)
++		if (_offset < mem.sizeP() && oldValue != _value)
+ 		{
+ 			notifyProgramMemWrite(_offset);
+ 			m_jit.notifyProgramMemWrite(_offset);
+@@ -1029,7 +1029,8 @@
+ 
+ 	void DSP::notifyProgramMemWrite(TWord _offset)
+ 	{
+-		m_opcodeCache[_offset].op = &DSP::op_ResolveCache;
++		if (_offset < m_opcodeCache.size())
++			m_opcodeCache[_offset].op = &DSP::op_ResolveCache;
+ 
+ #if DSP56300_DEBUGGER
+ 		if(m_debugger)
+@@ -1275,13 +1276,25 @@
+ 
+ 	void DSP::clearOpcodeCache()
+ 	{
++		// Schwung: the interpreter's per-address cache (48 bytes per P word, ~75 MB for a 1.5M-word P space)
++		// is only built when the interpreter is enabled; the JIT never reads it.
+ 		m_opcodeCache.clear();
+-		m_opcodeCache.resize(mem.sizeP(), {&DSP::op_ResolveCache});
++		if (m_interpreterEnabled)
++			m_opcodeCache.resize(mem.sizeP(), {&DSP::op_ResolveCache});
++		else
++			m_opcodeCache.shrink_to_fit();
+ 	}
+ 
++	void DSP::setInterpreterEnabled(const bool _enabled)
++	{
++		m_interpreterEnabled = _enabled;
++		clearOpcodeCache();
++	}
++
+ 	void DSP::clearOpcodeCache(const TWord _address)
+ 	{
+-		m_opcodeCache[_address].op = &DSP::op_ResolveCache;
++		if (_address < m_opcodeCache.size())
++			m_opcodeCache[_address].op = &DSP::op_ResolveCache;
+ 		m_jit.notifyProgramMemWrite(_address);
+ 	}
+ 	
+--- a/source/dsp56kEmu/dsp.h
++++ b/source/dsp56kEmu/dsp.h
+@@ -122,6 +122,7 @@
+ 		};
+ 
+ 		std::vector<OpcodeCacheEntry>	m_opcodeCache;
++		bool							m_interpreterEnabled = false;	// Schwung: see clearOpcodeCache
+ 		
+ 		InstructionCache				cache;
+ 
+@@ -290,6 +291,7 @@
+ 		}
+ 
+ 		void			clearOpcodeCache				();
++		void			setInterpreterEnabled			(bool _enabled);	// Schwung: the interpreter needs its opcode cache
+ 		void			clearOpcodeCache				(TWord _address);
+ 
+ 		void			dumpRegisters					() const;
+--- a/source/dsp56kEmu/audio.h
++++ b/source/dsp56kEmu/audio.h
+@@ -263,7 +263,13 @@
+ 		auto& getAudioOutputs() { return m_audioOutputs; }
+ 
+ 	public:
++#ifdef DSP56300_AUDIO_RINGBUFFER_SIZE
++		// Schwung: a host that never streams audio through ESSI/ESAI (the Monomodule harness) shrinks these;
++		// at the default each Audio holds ~42 MB of zero-filled frames.
++		static constexpr uint32_t RingBufferSize = DSP56300_AUDIO_RINGBUFFER_SIZE;
++#else
+ 		static constexpr uint32_t RingBufferSize = 8192 * 4;
++#endif
+ 
+ 	protected:
+ 		void readRXimpl(RxFrame& _values);

@@ -13,13 +13,14 @@ if(MNM_DSP56300_DIR)
   set(_dsp_src "${MNM_DSP56300_DIR}")
 else()
   include(FetchContent)
-  set(_dsp_patch "${MNM_ROOT}/ext/patches/0001-dsp56300-mnm.patch")
-  file(SHA256 "${_dsp_patch}" _dsp_patch_hash)   # part of the patch command: a changed patch re-patches the checkout
+  set(_dsp_patches "${MNM_ROOT}/ext/patches/0001-dsp56300-mnm.patch|${CMAKE_CURRENT_SOURCE_DIR}/patches/0002-dsp56300-schwung.patch")
+  file(SHA256 "${MNM_ROOT}/ext/patches/0001-dsp56300-mnm.patch" _h1)
+  file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/patches/0002-dsp56300-schwung.patch" _h2)
   FetchContent_Declare(dsp56300
     GIT_REPOSITORY https://github.com/dsp56300/dsp56300.git
     GIT_TAG        ${MNM_DSP56300_COMMIT}
     GIT_SUBMODULES source/asmjit
-    PATCH_COMMAND  ${CMAKE_COMMAND} -DPATCH=${_dsp_patch} -DPATCH_HASH=${_dsp_patch_hash} -P ${MNM_ROOT}/cmake/apply_patch.cmake
+    PATCH_COMMAND  ${CMAKE_COMMAND} "-DPATCHES=${_dsp_patches}" -DPATCH_HASH=${_h1}${_h2} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/apply_patches.cmake
     SOURCE_SUBDIR  _no_top_level_project)   # populate only; the libraries are added below
   FetchContent_MakeAvailable(dsp56300)
   set(_dsp_src "${dsp56300_SOURCE_DIR}")
@@ -35,6 +36,9 @@ add_subdirectory("${_dsp_src}/source/asmjit"     "${CMAKE_BINARY_DIR}/dsp56300/a
 add_subdirectory("${_dsp_src}/source/dsp56kBase" "${CMAKE_BINARY_DIR}/dsp56300/dsp56kBase" EXCLUDE_FROM_ALL)
 add_subdirectory("${_dsp_src}/source/dsp56kEmu"  "${CMAKE_BINARY_DIR}/dsp56300/dsp56kEmu"  EXCLUDE_FROM_ALL)
 set(_dsp_libs asmjit dsp56kBase dsp56kEmu)
+# Our patch (patches/0002): the harness streams no audio through ESSI, so its ring buffers stay tiny. PUBLIC:
+# every translation unit that includes audio.h must agree on the layout.
+target_compile_definitions(dsp56kEmu PUBLIC DSP56300_AUDIO_RINGBUFFER_SIZE=256)
 if(FALSE)   # the emulator's own interpreter/JIT opcode tests (patched); registered in tests/
   add_subdirectory("${_dsp_src}/source/dsp56kTestRunner" "${CMAKE_BINARY_DIR}/dsp56300/dsp56kTestRunner")
   list(APPEND _dsp_libs dsp56kTestRunner)

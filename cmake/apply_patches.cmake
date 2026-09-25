@@ -1,0 +1,15 @@
+# Resets the dsp56300 checkout to its pinned commit and applies each patch in PATCHES (;-separated) in order:
+# upstream Monomodule's, then ours (patches/). Runs again whenever any patch changes (PATCH_HASH).
+find_package(Git REQUIRED)
+execute_process(COMMAND ${GIT_EXECUTABLE} checkout -- source RESULT_VARIABLE rc OUTPUT_QUIET)
+if(NOT rc EQUAL 0)
+  message(FATAL_ERROR "could not reset the dsp56300 checkout")
+endif()
+string(REPLACE "|" ";" PATCHES "${PATCHES}")
+foreach(p ${PATCHES})
+  execute_process(COMMAND ${GIT_EXECUTABLE} apply --whitespace=nowarn ${p} RESULT_VARIABLE rc)
+  if(NOT rc EQUAL 0)
+    message(FATAL_ERROR "could not apply ${p}")
+  endif()
+  message(STATUS "applied ${p}")
+endforeach()
